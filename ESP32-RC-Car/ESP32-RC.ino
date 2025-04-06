@@ -124,7 +124,9 @@ void configureWiFiAP() {
     Serial.print("AP SSID: ");
     Serial.println(ap_ssid);
     Serial.print("AP Password: ");
-    Serial.println(ap_password);
+    #ifdef DEBUG
+        Serial.println(ap_password);
+    #endif
   } else {
     Serial.println("Failed to create Access Point!");
   }
