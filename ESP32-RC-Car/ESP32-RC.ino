@@ -2,8 +2,6 @@
 #include <WebServer.h>
 #include <WebSocketsServer.h>
 #include "index.h"
-#include <esp_wifi.h>
-#include <lwip/dns.h>
 
 #define CMD_STOP 0
 #define CMD_FORWARD 1
@@ -21,10 +19,6 @@
 // Access point credentials
 const char* ap_ssid = "ESP32_RC_Car";     // Name of the access point
 const char* ap_password = "12345678";     // Password for the access point (min 8 chars)
-
-// Home network credentials - replace with your own
-const char* sta_ssid = "Khong biet 5G";     // Name of your home WiFi network
-const char* sta_password = "hoilamchithe"; // Password for your home WiFi
 
 // IP configurations for AP mode
 IPAddress ap_local_IP(192, 168, 4, 1);
@@ -86,7 +80,7 @@ void handleRoot() {
 
 void setup() {
   Serial.begin(9600);
-  Serial.println("ESP32 RC Car with dual WiFi mode starting...");
+  Serial.println("ESP32 RC Car starting in AP mode...");
 
   // Configure motor pins
   pinMode(ENA_PIN, OUTPUT);
@@ -98,19 +92,11 @@ void setup() {
   digitalWrite(ENA_PIN, HIGH);  // set full speed
   digitalWrite(ENB_PIN, HIGH);  // set full speed
 
-  // Set WiFi to dual mode
-  WiFi.mode(WIFI_AP_STA);
+  // Set WiFi to AP mode only
+  WiFi.mode(WIFI_AP);
 
-  // Configure AP mode
+  // Configure and start AP
   configureWiFiAP();
-  
-  // Connect to home WiFi
-  configureWiFiStation();
-  
-  // Setup NAT/IP forwarding if station connected
-  if (WiFi.status() == WL_CONNECTED) {
-    setupNAT();
-  }
 
   // Initialize WebSocket server
   webSocket.begin();
@@ -135,66 +121,20 @@ void configureWiFiAP() {
   if (apSuccess) {
     Serial.print("AP IP address: ");
     Serial.println(WiFi.softAPIP());
+    Serial.print("AP SSID: ");
+    Serial.println(ap_ssid);
+    Serial.print("AP Password: ");
+    #ifdef DEBUG
+        Serial.println(ap_password);
+    #endif
   } else {
     Serial.println("Failed to create Access Point!");
   }
 }
 
-void configureWiFiStation() {
-  Serial.print("Connecting to home WiFi network: ");
-  Serial.println(sta_ssid);
-  
-  WiFi.begin(sta_ssid, sta_password);
-  
-  // Try to connect for 20 seconds
-  // int attempts = 0;
-  // while (WiFi.status() != WL_CONNECTED && attempts < 5) {
-  //   delay(1000);
-  //   Serial.print(".");
-  //   attempts++;
-  // }
-  WiFi.mode(WIFI_AP);
-
-  // if (WiFi.status() == WL_CONNECTED) {
-  //   Serial.println("");
-  //   Serial.println("Successfully connected to home WiFi");
-  //   Serial.print("STA IP address: ");
-  //   Serial.println(WiFi.localIP());
-  // } else {
-  //   Serial.println("");
-  //   Serial.println("Failed to connect to home WiFi, continuing in AP-only mode");
-  //   // Disable station mode if it failed to connect
-  //   WiFi.mode(WIFI_AP);
-  // }
-}
-
-void setupNAT() {
-  // Disable WiFi power save mode for better performance
-  esp_wifi_set_ps(WIFI_PS_NONE);
-  
-  Serial.println("NAT router enabled");
-  Serial.println("Devices connected to the ESP32 AP can now access the internet");
-}
-
 void loop() {
   server.handleClient();  // Handle HTTP requests
   webSocket.loop();       // Handle WebSocket requests
-  
-  // Check WiFi station status periodically
-  static unsigned long lastWiFiCheck = 0;
-  const unsigned long CHECK_INTERVAL = 30000; // 30 seconds
-  
-  if (millis() - lastWiFiCheck > CHECK_INTERVAL) {
-    lastWiFiCheck = millis();
-    
-    if (WiFi.status() == WL_CONNECTED) {
-      Serial.println("WiFi still connected to: " + String(sta_ssid));
-    } else if (WiFi.getMode() & WIFI_STA) {
-      Serial.println("WiFi connection lost, attempting to reconnect...");
-      WiFi.disconnect();
-      WiFi.begin(sta_ssid, sta_password);
-    }
-  }
 }
 
 void CAR_moveForward() {
