@@ -1,6 +1,7 @@
 #include <WiFi.h>
 #include <WebServer.h>
 #include <WebSocketsServer.h>
+#include <ESP32Servo.h>
 #include "index.h"
 
 #define CMD_STOP 0
@@ -9,12 +10,36 @@
 #define CMD_LEFT 4
 #define CMD_RIGHT 8
 
-#define ENA_PIN 14  // The ESP32 pin GPIO14 connected to the ENA pin L298N
-#define IN1_PIN 27  // The ESP32 pin GPIO27 connected to the IN1 pin L298N
-#define IN2_PIN 26  // The ESP32 pin GPIO26 connected to the IN2 pin L298N
-#define IN3_PIN 25  // The ESP32 pin GPIO25 connected to the IN3 pin L298N
-#define IN4_PIN 33  // The ESP32 pin GPIO33 connected to the IN4 pin L298N
-#define ENB_PIN 32  // The ESP32 pin GPIO32 connected to the ENB pin L298N
+// Servo commands
+#define CMD_SERVO1 16
+#define CMD_SERVO2 32
+#define CMD_SERVO3 64
+#define CMD_SERVO4 128
+
+#define ENA_PIN 15  // The ESP32 pin GPIO14 connected to the ENA pin L298N
+#define IN1_PIN 2   // The ESP32 pin GPIO27 connected to the IN1 pin L298N
+#define IN2_PIN 4   // The ESP32 pin GPIO26 connected to the IN2 pin L298N
+#define IN3_PIN 16  // The ESP32 pin GPIO25 connected to the IN3 pin L298N
+#define IN4_PIN 17  // The ESP32 pin GPIO33 connected to the IN4 pin L298N
+#define ENB_PIN 5   // The ESP32 pin GPIO32 connected to the ENB pin L298N
+
+// Servo pins - modified to avoid conflict with motor pins
+#define SERVO1_PIN 13
+#define SERVO2_PIN 12
+#define SERVO3_PIN 14
+#define SERVO4_PIN 27
+
+// Create servo objects
+Servo servo1;
+Servo servo2;
+Servo servo3;
+Servo servo4;
+
+// Servo positions (0-180)
+int servo1Pos = 90;
+int servo2Pos = 90;
+int servo3Pos = 90;
+int servo4Pos = 90;
 
 // Access point credentials
 const char* ap_ssid = "ESP32_RC_Car";     // Name of the access point
@@ -40,34 +65,72 @@ void webSocketEvent(uint8_t num, WStype_t type, uint8_t* payload, size_t length)
       }
       break;
     case WStype_TEXT:
-      String angle = String((char*)payload);
-      int command = angle.toInt();
-      Serial.print("command: ");
-      Serial.println(command);
+      {
+        String message = String((char*)payload);
+        Serial.print("Received message: ");
+        Serial.println(message);
+        
+        // Check if it's a servo position command (format: "CMD_SERVO#:position")
+        if (message.indexOf(":") > 0) {
+          int cmdPos = message.indexOf(":");
+          int cmd = message.substring(0, cmdPos).toInt();
+          int pos = message.substring(cmdPos + 1).toInt();
+          
+          // Process servo commands
+          switch (cmd) {
+            case CMD_SERVO1:
+              servo1Pos = pos;
+              servo1.write(servo1Pos);
+              Serial.printf("Setting Servo 1 to %d degrees\n", servo1Pos);
+              break;
+            case CMD_SERVO2:
+              servo2Pos = pos;
+              servo2.write(servo2Pos);
+              Serial.printf("Setting Servo 2 to %d degrees\n", servo2Pos);
+              break;
+            case CMD_SERVO3:
+              servo3Pos = pos;
+              servo3.write(servo3Pos);
+              Serial.printf("Setting Servo 3 to %d degrees\n", servo3Pos);
+              break;
+            case CMD_SERVO4:
+              servo4Pos = pos;
+              servo4.write(servo4Pos);
+              Serial.printf("Setting Servo 4 to %d degrees\n", servo4Pos);
+              break;
+          }
+        } 
+        else {
+          // Regular movement commands
+          int command = message.toInt();
+          Serial.print("command: ");
+          Serial.println(command);
 
-      switch (command) {
-        case CMD_STOP:
-          Serial.println("Stop");
-          CAR_stop();
-          break;
-        case CMD_FORWARD:
-          Serial.println("Move Forward");
-          CAR_moveForward();
-          break;
-        case CMD_BACKWARD:
-          Serial.println("Move Backward");
-          CAR_moveBackward();
-          break;
-        case CMD_LEFT:
-          Serial.println("Turn Left");
-          CAR_turnLeft();
-          break;
-        case CMD_RIGHT:
-          Serial.println("Turn Right");
-          CAR_turnRight();
-          break;
-        default:
-          Serial.println("Unknown command");
+          switch (command) {
+            case CMD_STOP:
+              Serial.println("Stop");
+              CAR_stop();
+              break;
+            case CMD_FORWARD:
+              Serial.println("Move Forward");
+              CAR_moveForward();
+              break;
+            case CMD_BACKWARD:
+              Serial.println("Move Backward");
+              CAR_moveBackward();
+              break;
+            case CMD_LEFT:
+              Serial.println("Turn Left");
+              CAR_turnLeft();
+              break;
+            case CMD_RIGHT:
+              Serial.println("Turn Right");
+              CAR_turnRight();
+              break;
+            default:
+              Serial.println("Unknown command");
+          }
+        }
       }
       break;
   }
@@ -91,6 +154,31 @@ void setup() {
   pinMode(IN4_PIN, OUTPUT);
   digitalWrite(ENA_PIN, HIGH);  // set full speed
   digitalWrite(ENB_PIN, HIGH);  // set full speed
+
+  // Initialize ESP32 Servo library
+  ESP32PWM::allocateTimer(0);
+  ESP32PWM::allocateTimer(1);
+  ESP32PWM::allocateTimer(2);
+  ESP32PWM::allocateTimer(3);
+  
+  // Attach servos to pins and configure
+  servo1.setPeriodHertz(50);      // Standard 50Hz servo
+  servo1.attach(SERVO1_PIN, 500, 2400); // Adjust min/max pulse width if needed
+  servo1.write(servo1Pos);         // Set to initial position
+  
+  servo2.setPeriodHertz(50);
+  servo2.attach(SERVO2_PIN, 500, 2400);
+  servo2.write(servo2Pos);
+  
+  servo3.setPeriodHertz(50);
+  servo3.attach(SERVO3_PIN, 500, 2400);
+  servo3.write(servo3Pos);
+  
+  servo4.setPeriodHertz(50);
+  servo4.attach(SERVO4_PIN, 500, 2400);
+  servo4.write(servo4Pos);
+  
+  Serial.println("Servos initialized");
 
   // Set WiFi to AP mode only
   WiFi.mode(WIFI_AP);
@@ -170,4 +258,20 @@ void CAR_stop() {
   digitalWrite(IN2_PIN, LOW);
   digitalWrite(IN3_PIN, LOW);
   digitalWrite(IN4_PIN, LOW);
+}
+
+void moveServo1() {
+  servo1.write(servo1Pos);
+}
+
+void moveServo2() {
+  servo2.write(servo2Pos);
+}
+
+void moveServo3() {
+  servo3.write(servo3Pos);
+}
+
+void moveServo4() {
+  servo4.write(servo4Pos);
 }
