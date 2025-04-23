@@ -13,8 +13,42 @@
     <title>ESP32 Control Car via Web</title>
     <meta name="viewport" content="width=device-width, initial-scale=0.7, maximum-scale=1, user-scalable=no">
     <style type="text/css">
-    body { text-align: center; font-size: 24px;}
-    button { text-align: center; font-size: 24px;}
+    body { 
+      text-align: center; 
+      font-size: 24px;
+      font-family: Arial, sans-serif;
+      background-color: #f0f0f0;
+      padding: 10px;
+      color: #333;
+    }
+    
+    h2, h3 {
+      color: #2196F3;
+      margin: 15px 0;
+    }
+    
+    button { 
+      text-align: center; 
+      font-size: 24px;
+    }
+    
+    .controls-container {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      margin-bottom: 30px;
+    }
+    
+    .control-section {
+      margin-bottom: 20px;
+      background-color: white;
+      border-radius: 15px;
+      padding: 15px;
+      box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+      width: 100%;
+      max-width: 450px;
+    }
+    
     #container {
         margin-right: auto;
         margin-left: auto;
@@ -23,6 +57,16 @@
         position: relative;
         margin-bottom: 10px;
     }
+    
+    #smallContainer {
+        margin-right: auto;
+        margin-left: auto;
+        width: 300px; 
+        height: 300px;
+        position: relative;
+        margin-bottom: 10px;
+    }
+    
     div[class^='button'] { 
         position: absolute;
         display: flex;
@@ -35,9 +79,17 @@
         cursor: pointer;
         transition: background-color 0.2s;
     }
+    
+    /* Regular speed controls */
     .button_up, .button_down { width:214px; height:104px;}
     .button_left, .button_right { width:104px; height:214px;}
     .button_stop { width:178px; height:178px;}
+    
+    /* Slow speed controls */
+    .button_slow_up, .button_slow_down { width:160px; height:78px; font-size: 20px;}
+    .button_slow_left, .button_slow_right { width:78px; height:160px; font-size: 20px;}
+    .button_slow_stop { width:134px; height:134px; font-size: 20px;}
+    
     .button_up {
         background-color: #4CAF50;
         left: 200px;
@@ -73,6 +125,42 @@
         transform: translate(-50%, -50%);
     }
     
+    /* Slow speed button positions */
+    .button_slow_up {
+        background-color: #4CAF50;
+        left: 150px;
+        top: 0px;
+        transform: translateX(-50%);
+    }
+    
+    .button_slow_down {
+        background-color: #f44336;
+        left:150px;
+        bottom: 0px;
+        transform: translateX(-50%);
+    }
+    
+    .button_slow_right {
+        background-color: #2196F3;
+        right: 0px;
+        top: 150px;
+        transform: translateY(-50%);
+    }
+    
+    .button_slow_left {
+        background-color: #2196F3;
+        left:0px;
+        top: 150px;
+        transform: translateY(-50%);
+    }
+    
+    .button_slow_stop {
+        background-color: #FF9800;
+        left:150px;
+        top: 150px;
+        transform: translate(-50%, -50%);
+    }
+    
     .active {
         background-color: #555 !important;
         transform: scale(0.95) translateX(-50%);
@@ -89,6 +177,18 @@
     .button_stop.active {
         transform: scale(0.95) translate(-50%, -50%);
     }
+    
+    .button_slow_up.active, .button_slow_down.active {
+        transform: scale(0.95) translateX(-50%);
+    }
+    
+    .button_slow_left.active, .button_slow_right.active {
+        transform: scale(0.95) translateY(-50%);
+    }
+    
+    .button_slow_stop.active {
+        transform: scale(0.95) translate(-50%, -50%);
+    }
 
     /* Servo Control Styles */
     .servo-controls {
@@ -98,16 +198,20 @@
         padding: 15px;
         border: 2px solid #333;
         border-radius: 10px;
-        background-color: #f0f0f0;
+        background-color: white;
+        box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
     }
 
     .slider-container {
-        margin: 15px 0;
+        margin: 20px 0;
+        padding: 10px;
+        border-radius: 8px;
+        background-color: #f9f9f9;
     }
 
     .slider-container label {
         display: block;
-        margin-bottom: 5px;
+        margin-bottom: 8px;
         font-weight: bold;
         color: #333;
     }
@@ -122,7 +226,7 @@
     .slider-actions {
         display: flex;
         justify-content: space-around;
-        margin-top: 5px;
+        margin-top: 10px;
     }
 
     .slider-actions button {
@@ -131,12 +235,14 @@
         background-color: #4CAF50;
         color: white;
         border: none;
-        border-radius: 5px;
+        border-radius: 8px;
         cursor: pointer;
         margin: 0 5px;
         min-width: 60px;
         user-select: none;
         -webkit-user-select: none;
+        box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+        transition: all 0.2s ease;
     }
 
     .slider-actions button.decrease {
@@ -153,6 +259,52 @@
     
     .slider-actions button:active {
         transform: scale(0.95);
+        box-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
+    }
+    
+    .connection-status {
+        margin: 20px auto;
+        padding: 10px;
+        background-color: white;
+        border-radius: 8px;
+        box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+        width: 90%;
+        max-width: 400px;
+    }
+    
+    #ws_state {
+        font-weight: bold;
+    }
+    
+    #wc_conn {
+        margin-top: 10px;
+        padding: 10px 20px;
+        background-color: #2196F3;
+        color: white;
+        border: none;
+        border-radius: 8px;
+        cursor: pointer;
+        box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+        transition: all 0.2s ease;
+    }
+    
+    #wc_conn:hover {
+        background-color: #0b7dda;
+    }
+    
+    .sponsor {
+        margin-top: 20px;
+        font-size: 18px;
+        color: #666;
+    }
+    
+    .sponsor a {
+        color: #2196F3;
+        text-decoration: none;
+    }
+    
+    .sponsor a:hover {
+        text-decoration: underline;
     }
     </style>
     <script>
@@ -164,47 +316,65 @@
     var CMD_SERVO1   = 16;
     var CMD_SERVO2   = 32;
     var CMD_SERVO3   = 64;
-    var CMD_SERVO4   = 128;
+    
+    // Slow movement commands
+    var CMD_SLOW_FORWARD  = 101;
+    var CMD_SLOW_BACKWARD = 102;
+    var CMD_SLOW_LEFT     = 104;
+    var CMD_SLOW_RIGHT    = 108;
+    
     var buttonText = {
       [CMD_STOP]:     "STOP",
       [CMD_FORWARD]:  "FORWARD",
       [CMD_BACKWARD]: "BACKWARD",
       [CMD_LEFT]:     "LEFT",
-      [CMD_RIGHT]:    "RIGHT"
+      [CMD_RIGHT]:    "RIGHT",
+      [CMD_SLOW_FORWARD]:  "SLOW<br>FORWARD",
+      [CMD_SLOW_BACKWARD]: "SLOW<br>BACKWARD",
+      [CMD_SLOW_LEFT]:     "SLOW<br>LEFT",
+      [CMD_SLOW_RIGHT]:    "SLOW<br>RIGHT"
     }
     var ws = null;
     var servoIntervals = {
       servo1: null,
       servo2: null, 
-      servo3: null,
-      servo4: null
+      servo3: null
     };
     var updateRate = 100; // Update servo position every 100ms (very slow)
     var adjustStep = 1; // Degrees to change per update
     
     function init() 
     {
+      // Regular speed controls
       var container = document.querySelector("#container");
-        container.addEventListener("touchstart", mouse_down);
-        container.addEventListener("touchend", mouse_up);
-        container.addEventListener("touchcancel", mouse_up);
-        container.addEventListener("mousedown", mouse_down);
-        container.addEventListener("mouseup", mouse_up);
-        container.addEventListener("mouseout", mouse_up);    
+      container.addEventListener("touchstart", mouse_down);
+      container.addEventListener("touchend", mouse_up);
+      container.addEventListener("touchcancel", mouse_up);
+      container.addEventListener("mousedown", mouse_down);
+      container.addEventListener("mouseup", mouse_up);
+      container.addEventListener("mouseout", mouse_up);
+      
+      // Slow speed controls  
+      var smallContainer = document.querySelector("#smallContainer");
+      smallContainer.addEventListener("touchstart", mouse_down);
+      smallContainer.addEventListener("touchend", mouse_up);
+      smallContainer.addEventListener("touchcancel", mouse_up);
+      smallContainer.addEventListener("mousedown", mouse_down);
+      smallContainer.addEventListener("mouseup", mouse_up);
+      smallContainer.addEventListener("mouseout", mouse_up);
 
       // Initialize servo values
       updateServoDisplay('servo1', 90);
       updateServoDisplay('servo2', 90);
       updateServoDisplay('servo3', 90);
-      updateServoDisplay('servo4', 90);
       
       // Set up event listeners for servo control buttons
       setupServoControlButtons();
     }
 
     function setupServoControlButtons() {
-      var servoIds = ['servo1', 'servo2', 'servo3', 'servo4'];
-      var cmdIds = [CMD_SERVO1, CMD_SERVO2, CMD_SERVO3, CMD_SERVO4];
+      var servoIds = ['servo1', 'servo2', 'servo3'];
+      var cmdIds = [CMD_SERVO1, CMD_SERVO2, CMD_SERVO3];
       
       servoIds.forEach((servoId, index) => {
         // Decrease button - press and hold
@@ -279,12 +449,14 @@
     }
     function ws_onopen()
     {
-      document.getElementById("ws_state").innerHTML = "OPEN";
+      document.getElementById("ws_state").innerHTML = "CONNECTED";
+      document.getElementById("ws_state").style.color = "#4CAF50";
       document.getElementById("wc_conn").innerHTML = "Disconnect";
     }
     function ws_onclose()
     {
-      document.getElementById("ws_state").innerHTML = "CLOSED";
+      document.getElementById("ws_state").innerHTML = "DISCONNECTED";
+      document.getElementById("ws_state").style.color = "#f44336";
       document.getElementById("wc_conn").innerHTML = "Connect";
       console.log("socket was closed");
       ws.onopen = null;
@@ -297,7 +469,8 @@
       if(ws == null)
       {
         ws = new WebSocket("ws://" + window.location.host + ":81");
-        document.getElementById("ws_state").innerHTML = "CONNECTING";
+        document.getElementById("ws_state").innerHTML = "CONNECTING...";
+        document.getElementById("ws_state").style.color = "#FF9800";
         
         ws.onopen = ws_onopen;
         ws.onclose = ws_onclose;
@@ -342,7 +515,6 @@
         case CMD_SERVO1: servoId = 'servo1'; break;
         case CMD_SERVO2: servoId = 'servo2'; break;
         case CMD_SERVO3: servoId = 'servo3'; break;
-        case CMD_SERVO4: servoId = 'servo4'; break;
       }
       
       if (servoId) {
@@ -360,7 +532,6 @@
         case 'servo1': cmdId = CMD_SERVO1; break;
         case 'servo2': cmdId = CMD_SERVO2; break;
         case 'servo3': cmdId = CMD_SERVO3; break;
-        case 'servo4': cmdId = CMD_SERVO4; break;
       }
       if(ws != null && ws.readyState == 1 && cmdId) {
         ws.send(cmdId + ":0\r\n");
@@ -374,7 +545,6 @@
         case 'servo1': cmdId = CMD_SERVO1; break;
         case 'servo2': cmdId = CMD_SERVO2; break;
         case 'servo3': cmdId = CMD_SERVO3; break;
-        case 'servo4': cmdId = CMD_SERVO4; break;
       }
       if(ws != null && ws.readyState == 1 && cmdId) {
         ws.send(cmdId + ":90\r\n");
@@ -388,7 +558,6 @@
         case 'servo1': cmdId = CMD_SERVO1; break;
         case 'servo2': cmdId = CMD_SERVO2; break;
         case 'servo3': cmdId = CMD_SERVO3; break;
-        case 'servo4': cmdId = CMD_SERVO4; break;
       }
       if(ws != null && ws.readyState == 1 && cmdId) {
         ws.send(cmdId + ":180\r\n");
@@ -399,13 +568,30 @@
     </script>
     </head>
     <body>
-    <h2>ESP32 - RC Car via Web</h2>
-    <div id="container">
-      <div id="0" class="button_stop">STOP</div>
-      <div id="1" class="button_up">FORWARD</div>
-      <div id="2" class="button_down">BACKWARD</div>
-      <div id="8" class="button_right">RIGHT</div>
-      <div id="4" class="button_left">LEFT</div>
+    <h2>ESP32 - RC Car Control</h2>
+    
+    <div class="controls-container">
+      <div class="control-section">
+        <h3>Regular Speed Controls</h3>
+        <div id="container">
+          <div id="0" class="button_stop">STOP</div>
+          <div id="1" class="button_up">FORWARD</div>
+          <div id="2" class="button_down">BACKWARD</div>
+          <div id="8" class="button_right">RIGHT</div>
+          <div id="4" class="button_left">LEFT</div>
+        </div>
+      </div>
+      
+      <div class="control-section">
+        <h3>Fine Movement Controls (Slow Speed)</h3>
+        <div id="smallContainer">
+          <div id="0" class="button_slow_stop">STOP</div>
+          <div id="101" class="button_slow_up">SLOW FORWARD</div>
+          <div id="102" class="button_slow_down">SLOW BACKWARD</div>
+          <div id="108" class="button_slow_right">SLOW RIGHT</div>
+          <div id="104" class="button_slow_left">SLOW LEFT</div>
+        </div>
+      </div>
     </div>
     
     <div class="servo-controls">
@@ -446,26 +632,13 @@
           <button id="servo3Increase">►</button>
         </div>
       </div>
-      
-      <div class="slider-container">
-        <label for="servo4">Servo 4 (Pin 27):</label>
-        <div class="servo-value" id="servo4Value">90°</div>
-        <div class="slider-actions">
-          <button id="servo4Decrease" class="decrease">◄</button>
-          <button class="action" onclick="setMin('servo4')">Min</button>
-          <button class="action" onclick="setMid('servo4')">Mid</button>
-          <button class="action" onclick="setMax('servo4')">Max</button>
-          <button id="servo4Increase">►</button>
-        </div>
-      </div>
     </div>
 
-    <p>
-    WebSocket : <span id="ws_state" style="color:blue">closed</span><br>
-    </p>
-    <button id="wc_conn" type="button" onclick="wc_onclick();">Connect</button>
-    <br>
-    <br>
+    <div class="connection-status">
+      <p>WebSocket Status: <span id="ws_state" style="color:#f44336">DISCONNECTED</span></p>
+      <button id="wc_conn" type="button" onclick="wc_onclick();">Connect</button>
+    </div>
+    
     <div class="sponsor">Sponsored by <a href="https://amazon.com/diyables">DIYables</a></div>
     </body>
     </html>

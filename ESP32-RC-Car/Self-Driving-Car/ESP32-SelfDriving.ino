@@ -13,7 +13,7 @@
 #define IN3 2   // Left motors direction 1
 #define IN4 4   // Left motors direction 2
 
-// Pin definitions for HW-871 line sensors
+// Pin definitions for line sensors (using digital reading with pull-up resistors)
 #define SENSOR_1 26  // Leftmost sensor
 #define SENSOR_2 25
 #define SENSOR_3 33  // Middle sensor
@@ -84,12 +84,12 @@ void setup() {
     ledcAttach(ENA, freq, resolution);
     ledcAttach(ENB, freq, resolution);
     
-    // Initialize line sensor pins
-    pinMode(SENSOR_1, INPUT);
-    pinMode(SENSOR_2, INPUT);
-    pinMode(SENSOR_3, INPUT);
-    pinMode(SENSOR_4, INPUT);
-    pinMode(SENSOR_5, INPUT);
+    // Initialize line sensor pins with pull-up resistors
+    pinMode(SENSOR_1, INPUT_PULLUP);
+    pinMode(SENSOR_2, INPUT_PULLUP);
+    pinMode(SENSOR_3, INPUT_PULLUP);
+    pinMode(SENSOR_4, INPUT_PULLUP);
+    pinMode(SENSOR_5, INPUT_PULLUP);
     
     // Initialize sonar sensor pins
     pinMode(TRIGGER_PIN, OUTPUT);
@@ -121,74 +121,8 @@ void setup() {
         delay(500); // Debounce
     }
     
-    Serial.println("Starting sensor calibration...");
-    Serial.println("Move the car over the line a few times in the next 7 seconds");
-    
-    // Start calibration
-    calibrationStartTime = millis();
-    
-    // During calibration, blink LED rapidly
-    while (calibrationMode) {
-        // Blink LED during calibration
-        digitalWrite(LED_PIN, (millis() % 200 < 100) ? LOW : HIGH);
-        
-        // Read and calibrate sensors
-        calibrateSensors();
-        
-        // End calibration after time expires
-        if (millis() - calibrationStartTime > CALIBRATION_DURATION) {
-            calibrationMode = false;
-            calculateThresholds();
-            Serial.println("Calibration complete!");
-            
-            // Print calibration results
-            Serial.println("Sensor min values (white):");
-            for (int i = 0; i < 5; i++) {
-                Serial.print(sensorMin[i]);
-                Serial.print(" ");
-            }
-            Serial.println();
-            
-            Serial.println("Sensor max values (black):");
-            for (int i = 0; i < 5; i++) {
-                Serial.print(sensorMax[i]);
-                Serial.print(" ");
-            }
-            Serial.println();
-            
-            Serial.println("Calculated thresholds:");
-            for (int i = 0; i < 5; i++) {
-                Serial.print(sensorThreshold[i]);
-                Serial.print(" ");
-            }
-            Serial.println();
-            
-            delay(1000);
-        }
-    }
-    
-    digitalWrite(LED_PIN, HIGH); // Turn off LED
+    Serial.println("Ready to drive!");
     delay(1000); // Short delay before starting
-
-    // Test motors
-    Serial.println("Testing motors...");
-    
-    // Test left motors
-    digitalWrite(IN1, HIGH);
-    digitalWrite(IN2, LOW);
-    ledcWrite(ENA, 200);
-    delay(500);
-    ledcWrite(ENA, 0);
-    
-    // Test right motors
-    digitalWrite(IN3, HIGH);
-    digitalWrite(IN4, LOW);
-    ledcWrite(ENB, 200);
-    delay(500);
-    ledcWrite(ENB, 0);
-    
-    Serial.println("Motor test complete");
-    delay(1000);
 }
 
 // Function to calculate motor speeds based on correction
@@ -334,37 +268,32 @@ void calculateThresholds() {
     }
 }
 
-// Read line position
+// Read line position using digital readings
 float readLinePosition() {
     int sensorValues[5];
-    int rawValues[5]; // Store raw analog values for debugging
     
-    // Read sensors with analog values for better sensitivity
-    rawValues[0] = analogRead(SENSOR_1);
-    rawValues[1] = analogRead(SENSOR_2);
-    rawValues[2] = analogRead(SENSOR_3);
-    rawValues[3] = analogRead(SENSOR_4);
-    rawValues[4] = analogRead(SENSOR_5);
-    
-    // Apply thresholds based on the line detection mode
-    for (int i = 0; i < 5; i++) {
-        if (followBlackLine) {
-            // Black line mode: 1 when value > threshold (black detected)
-            sensorValues[i] = (rawValues[i] > sensorThreshold[i]) ? 1 : 0;
-        } else {
-            // White line mode: 1 when value < threshold (white detected)
-            sensorValues[i] = (rawValues[i] < sensorThreshold[i]) ? 1 : 0;
-        }
+    // Read sensors with digital values (1 = line detected, 0 = no line)
+    // Pull-up resistors make the reading inverted - LOW means line is detected
+    // We invert the readings based on whether we're following black or white line
+    if (followBlackLine) {
+        // Following black line (black = LOW with pull-up)
+        sensorValues[0] = !digitalRead(SENSOR_1);
+        sensorValues[1] = !digitalRead(SENSOR_2);
+        sensorValues[2] = !digitalRead(SENSOR_3);
+        sensorValues[3] = !digitalRead(SENSOR_4);
+        sensorValues[4] = !digitalRead(SENSOR_5);
+    } else {
+        // Following white line (white = HIGH with pull-up)
+        sensorValues[0] = digitalRead(SENSOR_1);
+        sensorValues[1] = digitalRead(SENSOR_2);
+        sensorValues[2] = digitalRead(SENSOR_3);
+        sensorValues[3] = digitalRead(SENSOR_4);
+        sensorValues[4] = digitalRead(SENSOR_5);
     }
     
     if (DEBUG_MODE) {
-        // Print raw sensor readings for debugging
-        Serial.print("Raw: ");
-        for (int i = 0; i < 5; i++) {
-            Serial.print(rawValues[i]);
-            Serial.print(" ");
-        }
-        Serial.print("| Binary: ");
+        // Print sensor readings for debugging
+        Serial.print("Sensors: ");
         for (int i = 0; i < 5; i++) {
             Serial.print(sensorValues[i]);
             Serial.print(" ");
@@ -373,7 +302,7 @@ float readLinePosition() {
         Serial.println(followBlackLine ? "BLACK" : "WHITE");
     }
 
-    // Check for finish line (all sensors reading the same)
+    // Check for finish line (all sensors reading the same line)
     bool allSame = true;
     for (int i = 1; i < 5; i++) {
         if (sensorValues[i] != sensorValues[0]) {
@@ -389,17 +318,18 @@ float readLinePosition() {
         
         // Read again to confirm
         int confirmValues[5];
-        for (int i = 0; i < 5; i++) {
-            int rawValue = analogRead(i == 0 ? SENSOR_1 : 
-                                    i == 1 ? SENSOR_2 : 
-                                    i == 2 ? SENSOR_3 : 
-                                    i == 3 ? SENSOR_4 : SENSOR_5);
-                                    
-            if (followBlackLine) {
-                confirmValues[i] = (rawValue > sensorThreshold[i]) ? 1 : 0;
-            } else {
-                confirmValues[i] = (rawValue < sensorThreshold[i]) ? 1 : 0;
-            }
+        if (followBlackLine) {
+            confirmValues[0] = !digitalRead(SENSOR_1);
+            confirmValues[1] = !digitalRead(SENSOR_2);
+            confirmValues[2] = !digitalRead(SENSOR_3);
+            confirmValues[3] = !digitalRead(SENSOR_4);
+            confirmValues[4] = !digitalRead(SENSOR_5);
+        } else {
+            confirmValues[0] = digitalRead(SENSOR_1);
+            confirmValues[1] = digitalRead(SENSOR_2);
+            confirmValues[2] = digitalRead(SENSOR_3);
+            confirmValues[3] = digitalRead(SENSOR_4);
+            confirmValues[4] = digitalRead(SENSOR_5);
         }
         
         // Check if still all 1s
@@ -428,13 +358,14 @@ float readLinePosition() {
         }
     }
 
-    // Calculate weighted position
+    // Calculate weighted position using a simpler approach
     int sum = 0;
     int weightedSum = 0;
+    int sensorPositions[5] = {0, 1000, 2000, 3000, 4000}; // Position values for each sensor
 
     for (int i = 0; i < 5; i++) {
         sum += sensorValues[i];
-        weightedSum += sensorValues[i] * (i * 1000);  // Position weighted by sensor position
+        weightedSum += sensorValues[i] * sensorPositions[i];
     }
 
     // If no line is detected
@@ -450,41 +381,86 @@ float readLinePosition() {
     return position - 2000;
 }
 
-// Calculate PID correction
-float calculatePID(float error) {
-    // Calculate time since last update
-    unsigned long currentTime = millis();
-    float deltaTime = (currentTime - previousTime) / 1000.0;
-    previousTime = currentTime;
+// Function for simple line-following control without PID
+float calculateSimpleCorrection(float error) {
+    // Simple proportional control with a non-linear response
+    // This creates more aggressive corrections for larger errors
+    float correction = error * 0.04; // Simple proportional factor
+    
+    // Add non-linear component for more aggressive turns when far from line
+    if (abs(error) > 1000) {
+        correction *= 1.5; // Boost correction for large errors
+    }
+    
+    if (DEBUG_MODE) {
+        Serial.print("Line Error: ");
+        Serial.print(error);
+        Serial.print(" Correction: ");
+        Serial.println(correction);
+    }
+    
+    return correction;
+}
 
-    // Calculate P term
-    float P = Kp * error;
+void loop() {
+    // Measure distance to any obstacles in front
+    int obstacleDistance = measureDistance();
+    
+    // Adjust base speed for climbing stairs when distance is less than 4cm
+    if (obstacleDistance < 4) {
+        baseSpeed = 180; // Reduce speed for climbing stairs
+        if (DEBUG_MODE) {
+            Serial.println("Stair detected! Reducing speed for climbing.");
+        }
+    } else {
+        baseSpeed = 240; // Normal speed operation
+    }
+    
+    // Check if there's an obstacle too close (emergency stop)
+    if (obstacleDistance < 2) { // Extremely close obstacle
+        // Stop car
+        stopMotors();
+        Serial.print("Obstacle too close at ");
+        Serial.print(obstacleDistance);
+        Serial.println("cm. Stopping.");
+        
+        // Wait briefly
+        delay(300);
+        return; // Return to beginning of loop to reassess
+    }
 
-    // Calculate I term
-    integral += error * deltaTime;
-    // Prevent integral windup
-    integral = constrain(integral, -100, 100);
-    float I = Ki * integral;
+    // Read line position
+    float error = readLinePosition();
 
-    // Calculate D term
-    float derivative = (error - previousError) / deltaTime;
-    float D = Kd * derivative;
+    // Check for finish line (this is handled in readLinePosition)
+    if (error == 999) {
+        return; // Already stopped in readLinePosition
+    }
 
-    // Save current error for next iteration
-    previousError = error;
+    // Simple correction calculation (replacing PID)
+    float correction = calculateSimpleCorrection(error);
 
-    // Print PID values for debugging
-    Serial.print("PID: Error=");
-    Serial.print(error);
-    Serial.print(" P=");
-    Serial.print(P);
-    Serial.print(" I=");
-    Serial.print(I);
-    Serial.print(" D=");
-    Serial.println(D);
+    // Calculate motor speeds based on correction
+    int leftSpeed, rightSpeed;
+    
+    // Simpler motor speed calculation for 6-wheel rocker rover
+    // For smoother turns, apply proportional power instead of all-or-nothing
+    leftSpeed = baseSpeed - correction;
+    rightSpeed = baseSpeed + correction;
+    
+    // Ensure speeds are within valid range
+    leftSpeed = constrain(leftSpeed, 0, 255);
+    rightSpeed = constrain(rightSpeed, 0, 255);
+    
+    // Apply motor speeds - ensuring we're not completely stopping any side
+    // This provides smoother turns for the rocker rover
+    if (leftSpeed < 70) leftSpeed = 70;  // Minimum power to keep motors turning
+    if (rightSpeed < 70) rightSpeed = 70;
+    
+    setMotors(leftSpeed, rightSpeed);
 
-    // Return combined correction
-    return P + I + D;
+    // Short delay
+    delay(20); // Adjust as needed for responsiveness
 }
 
 // Function to measure distance using HC-SR04 sonar sensor
@@ -518,64 +494,4 @@ int measureDistance() {
     }
     
     return distance;
-}
-
-void loop() {
-    // Measure distance to any obstacles in front
-    int obstacleDistance = measureDistance();
-    
-    // Check if there's an obstacle too close
-    if (obstacleDistance < 20) { // Less than 20cm
-        // Stop car
-        stopMotors();
-        Serial.print("Obstacle detected at ");
-        Serial.print(obstacleDistance);
-        Serial.println("cm. Stopping.");
-        
-        // Wait briefly
-        delay(300);
-        
-        // Backup slightly
-        digitalWrite(IN1, LOW);
-        digitalWrite(IN2, HIGH);
-        digitalWrite(IN3, LOW);
-        digitalWrite(IN4, HIGH);
-        ledcWrite(ENA, 180);
-        ledcWrite(ENB, 180);
-        delay(400);
-        stopMotors();
-        
-        // Turn to avoid obstacle (turn right by default)
-        digitalWrite(IN1, HIGH);
-        digitalWrite(IN2, LOW);
-        digitalWrite(IN3, LOW);
-        digitalWrite(IN4, HIGH);
-        ledcWrite(ENA, 200);
-        ledcWrite(ENB, 200);
-        delay(500); // Adjust turn duration as needed
-        stopMotors();
-        
-        return; // Return to beginning of loop to reassess
-    }
-
-    // Read line position
-    float error = readLinePosition();
-
-    // Check for finish line (this is handled in readLinePosition)
-    if (error == 999) {
-        return; // Already stopped in readLinePosition
-    }
-
-    // Calculate PID correction
-    float correction = calculatePID(error);
-
-    // Calculate motor speeds based on PID correction
-    int leftSpeed, rightSpeed;
-    calculateMotorSpeeds(correction, &leftSpeed, &rightSpeed);
-
-    // Apply motor speeds
-    setMotors(leftSpeed, rightSpeed);
-
-    // Short delay
-    delay(20); // Adjust as needed for responsiveness
 }
