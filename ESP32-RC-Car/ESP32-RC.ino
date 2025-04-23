@@ -43,8 +43,8 @@ Servo servo3;
 
 // Servo positions (0-180)
 int servo1Pos = 90;
-int servo2Pos = 90;
-int servo3Pos = 90;
+int servo2Pos = 40;
+int servo3Pos = 15;
 // Access point credentials
 const char* ap_ssid = "ESP32_RC_Car";     // Name of the access point
 const char* ap_password = "monggiadinhanlanh";     // Password for the access point (min 8 chars)
