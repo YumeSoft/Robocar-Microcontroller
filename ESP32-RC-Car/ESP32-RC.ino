@@ -167,8 +167,8 @@ void setup() {
   pinMode(ENB_PIN, OUTPUT);
   pinMode(IN3_PIN, OUTPUT);
   pinMode(IN4_PIN, OUTPUT);
-  digitalWrite(ENA_PIN, HIGH);  // set full speed
-  digitalWrite(ENB_PIN, HIGH);  // set full speed
+  digitalWrite(ENA_PIN, MOTOR_BASE_SPEED);  // set full speed
+  digitalWrite(ENB_PIN, MOTOR_BASE_SPEED);  // set full speed
 
   // Initialize ESP32 Servo library
   ESP32PWM::allocateTimer(0);

@@ -13,7 +13,7 @@
 #define IN3 2   // Left motors direction 1
 #define IN4 4   // Left motors direction 2
 
-// Pin definitions for line sensors (using digital reading with Schmitt triggers)
+// Pin definitions for line sensors (using digital reading with pull-up resistors)
 #define SENSOR_1 26  // Leftmost sensor
 #define SENSOR_2 25
 #define SENSOR_3 33  // Middle sensor
@@ -27,29 +27,35 @@
 // Define onboard LED pin
 #define LED_PIN T2
 
-// Line color mode (1 = follow black line on white, 0 = follow white line on black)
-// Easily change this value instead of using a toggle button
-int followBlackLine = 1;  // Default to black line following
+// Define button pin for color mode toggle
+#define TOGGLE_BTN 13  // Choose an available pin
 
 // PID control constants - adjust these based on testing
-float Kp = 0.38;     // Proportional gain
-float Ki = 0.03;     // Integral gain 
+float Kp = 0.38;      // Proportional gain
+float Ki = 0.03;     // Integral gain
 float Kd = 0.1;      // Derivative gain
-
-// PWM control frequency
-#define PWM_FREQ 50  // 50Hz for smoother motor control
 
 // PID variables
 float previousError = 0;
 float integral = 0;
 unsigned long previousTime = 0;
-float maxIntegral = 100.0;  // Anti-windup limit for integral term
 
 // Motor speed variables
 int baseSpeed = 255;  // Base speed for motors, range 0-255
 
 // Add debug mode for sensors
 #define DEBUG_MODE true
+
+// Line color mode (true = follow black line on white, false = follow white line on black)
+bool followBlackLine = true;
+
+// Calibration variables
+bool calibrationMode = true;  // Start in calibration mode
+int sensorMax[5] = {4095, 4095, 4095, 4095, 4095};  // Minimum sensor readings (white)
+int sensorMin[5] = {0, 0, 0, 0, 0};                // Maximum sensor readings (black)
+int sensorThreshold[5] = {1500, 1500, 1500, 1500, 1500}; // Default threshold values
+unsigned long calibrationStartTime = 0;
+#define CALIBRATION_DURATION 7000  // Calibration duration in milliseconds
 
 // PWM properties for ESP32
 const int freq = 5000;
@@ -75,30 +81,45 @@ void setup() {
     pinMode(IN4, OUTPUT);
     
     // Configure ESP32 PWM for motor control using the new API (ESP32 v3.x)
-    ledcAttach(ENA, PWM_FREQ, resolution);
-    ledcAttach(ENB, PWM_FREQ, resolution);
+    ledcAttach(ENA, freq, resolution);
+    ledcAttach(ENB, freq, resolution);
     
-    // Initialize line sensor pins with INPUT mode (digital sensors with Schmitt triggers)
-    pinMode(SENSOR_1, INPUT);
-    pinMode(SENSOR_2, INPUT);
-    pinMode(SENSOR_3, INPUT);
-    pinMode(SENSOR_4, INPUT);
-    pinMode(SENSOR_5, INPUT);
+    // Initialize line sensor pins with pull-up resistors
+    pinMode(SENSOR_1, INPUT_PULLUP);
+    pinMode(SENSOR_2, INPUT_PULLUP);
+    pinMode(SENSOR_3, INPUT_PULLUP);
+    pinMode(SENSOR_4, INPUT_PULLUP);
+    pinMode(SENSOR_5, INPUT_PULLUP);
     
     // Initialize sonar sensor pins
     pinMode(TRIGGER_PIN, OUTPUT);
     pinMode(ECHO_PIN, INPUT);
     
-    // Show current line following mode with LED blinks
-    for (int i = 0; i < (followBlackLine ? 2 : 3); i++) {
-        digitalWrite(LED_PIN, LOW);  // LED on
-        delay(200);
-        digitalWrite(LED_PIN, HIGH); // LED off
-        delay(200);
-    }
+    // Initialize button pin for color mode toggle
+    pinMode(TOGGLE_BTN, INPUT_PULLUP);
     
-    Serial.print("Line tracking mode set to follow ");
-    Serial.println(followBlackLine ? "BLACK line" : "WHITE line");
+    // Check toggle button during startup to set line tracking mode
+    if (digitalRead(TOGGLE_BTN) == LOW) {
+        // Button pressed during startup - toggle line following mode
+        followBlackLine = !followBlackLine;
+        
+        // Indicate which mode is active with LED blinks
+        for (int i = 0; i < 3; i++) {
+            digitalWrite(LED_PIN, LOW);  // LED on
+            delay(200);
+            digitalWrite(LED_PIN, HIGH); // LED off
+            delay(200);
+        }
+        
+        Serial.print("Line tracking mode set to follow ");
+        Serial.println(followBlackLine ? "BLACK line" : "WHITE line");
+        
+        // Wait for button release
+        while (digitalRead(TOGGLE_BTN) == LOW) {
+            delay(10);
+        }
+        delay(500); // Debounce
+    }
     
     Serial.println("Ready to drive!");
     delay(1000); // Short delay before starting
@@ -145,10 +166,10 @@ void calculateMotorSpeeds(float correction, int *leftSpeed, int *rightSpeed) {
 // Function to control motors
 void setMotors(int leftSpeed, int rightSpeed) {
     // Constrain speeds to valid PWM range
-    leftSpeed = constrain(leftSpeed, 0, 255);
-    rightSpeed = constrain(rightSpeed, 0, 255);
+    leftSpeed = constrain(leftSpeed, -255, 255);
+    rightSpeed = constrain(rightSpeed, -255, 255);
     
-    // Left motors direction
+    // Left motors
     if (leftSpeed >= 0) {
         digitalWrite(IN1, HIGH);
         digitalWrite(IN2, LOW);
@@ -158,7 +179,7 @@ void setMotors(int leftSpeed, int rightSpeed) {
         leftSpeed = -leftSpeed;  // Convert negative speed to positive PWM value
     }
     
-    // Right motors direction
+    // Right motors
     if (rightSpeed >= 0) {
         digitalWrite(IN3, HIGH);
         digitalWrite(IN4, LOW);
@@ -168,9 +189,9 @@ void setMotors(int leftSpeed, int rightSpeed) {
         rightSpeed = -rightSpeed;  // Convert negative speed to positive PWM value
     }
     
-    // Apply PWM speed control using ESP32's ledcWrite for the channels
-    ledcWrite(0, rightSpeed);  // Channel 0 controls ENA (right motors)
-    ledcWrite(1, leftSpeed);   // Channel 1 controls ENB (left motors)
+    // Apply PWM speed control using ESP32's new ledcWrite API (directly to pins)
+    ledcWrite(ENA, leftSpeed);
+    ledcWrite(ENB, rightSpeed);
     
     if (DEBUG_MODE) {
         Serial.print("Motors: L=");
@@ -186,12 +207,65 @@ void stopMotors() {
     digitalWrite(IN2, LOW);
     digitalWrite(IN3, LOW);
     digitalWrite(IN4, LOW);
-    
-    // Stop motors by setting PWM to 0 on both channels
-    ledcWrite(0, 0);  // Channel 0 (ENA)
-    ledcWrite(1, 0);  // Channel 1 (ENB)
-    
+    ledcWrite(ENA, 0);
+    ledcWrite(ENB, 0);
     Serial.println("Motors stopped");
+}
+
+// Function to calibrate sensors
+void calibrateSensors() {
+    // Read current sensor values
+    int rawValues[5];
+    rawValues[0] = analogRead(SENSOR_1);
+    rawValues[1] = analogRead(SENSOR_2);
+    rawValues[2] = analogRead(SENSOR_3);
+    rawValues[3] = analogRead(SENSOR_4);
+    rawValues[4] = analogRead(SENSOR_5);
+    
+    // Update min and max values for each sensor
+    for (int i = 0; i < 5; i++) {
+        // Record minimum readings (white surface)
+        if (rawValues[i] < sensorMin[i]) {
+            sensorMin[i] = rawValues[i];
+        }
+        
+        // Record maximum readings (black line)
+        if (rawValues[i] > sensorMax[i]) {
+            sensorMax[i] = rawValues[i];
+        }
+    }
+    
+    // Print current readings every 500ms
+    static unsigned long lastPrintTime = 0;
+    if (millis() - lastPrintTime > 500) {
+        Serial.print("Current readings: ");
+        for (int i = 0; i < 5; i++) {
+            Serial.print(rawValues[i]);
+            Serial.print(" ");
+        }
+        Serial.println();
+        lastPrintTime = millis();
+    }
+    
+    delay(10); // Short delay between readings
+}
+
+// Calculate threshold values based on calibration
+void calculateThresholds() {
+    for (int i = 0; i < 5; i++) {
+        // Set threshold at 60% between min and max (adjust as needed)
+        // This bias toward detecting white can be adjusted (0.5 would be middle)
+        sensorThreshold[i] = sensorMin[i] + (sensorMax[i] - sensorMin[i]) * 0.6;
+        
+        // Ensure we have a valid range
+        if (sensorMax[i] - sensorMin[i] < 100) {
+            // If the difference is too small, use default threshold
+            sensorThreshold[i] = 500;
+            Serial.print("Warning: Sensor ");
+            Serial.print(i+1);
+            Serial.println(" has a small range. Calibration may not be effective.");
+        }
+    }
 }
 
 // Read line position using digital readings
@@ -199,16 +273,17 @@ float readLinePosition() {
     int sensorValues[5];
     
     // Read sensors with digital values (1 = line detected, 0 = no line)
-    // Inverted based on whether we're following black or white line
+    // Pull-up resistors make the reading inverted - LOW means line is detected
+    // We invert the readings based on whether we're following black or white line
     if (followBlackLine) {
-        // Following black line (digital sensors output LOW when black line is detected)
+        // Following black line (black = LOW with pull-up)
         sensorValues[0] = !digitalRead(SENSOR_1);
         sensorValues[1] = !digitalRead(SENSOR_2);
         sensorValues[2] = !digitalRead(SENSOR_3);
         sensorValues[3] = !digitalRead(SENSOR_4);
         sensorValues[4] = !digitalRead(SENSOR_5);
     } else {
-        // Following white line (digital sensors output HIGH when white line is detected)
+        // Following white line (white = HIGH with pull-up)
         sensorValues[0] = digitalRead(SENSOR_1);
         sensorValues[1] = digitalRead(SENSOR_2);
         sensorValues[2] = digitalRead(SENSOR_3);
@@ -327,58 +402,6 @@ float calculateSimpleCorrection(float error) {
     return correction;
 }
 
-// Function to calculate PID correction with anti-windup
-float calculatePIDCorrection(float error) {
-    unsigned long currentTime = millis();
-    float deltaTime = (currentTime - previousTime) / 1000.0; // Convert to seconds
-    
-    // Prevent division by zero or extremely small time intervals
-    if (deltaTime < 0.001) {
-        deltaTime = 0.001;
-    }
-    
-    // Calculate the integral term
-    integral += error * deltaTime;
-    
-    // Anti-windup for integral term - limit the integral to prevent excessive buildup
-    integral = constrain(integral, -maxIntegral, maxIntegral);
-    
-    // Calculate derivative (with some filtering to reduce noise)
-    float derivative = (error - previousError) / deltaTime;
-    
-    // PID formula
-    float output = Kp * error + Ki * integral + Kd * derivative;
-    
-    // Additional anti-windup: back-calculation method
-    float outputMax = 100.0;  // Maximum allowed output
-    if (output > outputMax) {
-        // Scale back the integral term when output is saturated
-        integral -= (output - outputMax) * 0.1;  // 0.1 is back-calculation gain
-        output = outputMax;
-    } else if (output < -outputMax) {
-        // Scale back the integral term when output is saturated
-        integral -= (output + outputMax) * 0.1;  // 0.1 is back-calculation gain
-        output = -outputMax;
-    }
-    
-    // Update state for next iteration
-    previousError = error;
-    previousTime = currentTime;
-    
-    if (DEBUG_MODE) {
-        Serial.print("PID: P=");
-        Serial.print(Kp * error);
-        Serial.print(" I=");
-        Serial.print(Ki * integral);
-        Serial.print(" D=");
-        Serial.print(Kd * derivative);
-        Serial.print(" Output=");
-        Serial.println(output);
-    }
-    
-    return output;
-}
-
 void loop() {
     // Measure distance to any obstacles in front
     int obstacleDistance = measureDistance();
@@ -414,13 +437,14 @@ void loop() {
         return; // Already stopped in readLinePosition
     }
 
-    // Use PID control with anti-windup for smoother operation
-    float correction = calculatePIDCorrection(error);
+    // Simple correction calculation (replacing PID)
+    float correction = calculateSimpleCorrection(error);
 
-    // Calculate motor speeds based on PID correction
+    // Calculate motor speeds based on correction
     int leftSpeed, rightSpeed;
     
-    // Apply PID correction to motor speeds
+    // Simpler motor speed calculation for 6-wheel rocker rover
+    // For smoother turns, apply proportional power instead of all-or-nothing
     leftSpeed = baseSpeed - correction;
     rightSpeed = baseSpeed + correction;
     
@@ -429,23 +453,14 @@ void loop() {
     rightSpeed = constrain(rightSpeed, 0, 255);
     
     // Apply motor speeds - ensuring we're not completely stopping any side
-    // This provides smoother turns for the rover
+    // This provides smoother turns for the rocker rover
     if (leftSpeed < 70) leftSpeed = 70;  // Minimum power to keep motors turning
     if (rightSpeed < 70) rightSpeed = 70;
     
     setMotors(leftSpeed, rightSpeed);
 
-    // Maintain loop timing for consistent 50Hz control rate
-    static unsigned long lastLoopTime = 0;
-    unsigned long currentTime = millis();
-    unsigned long elapsedTime = currentTime - lastLoopTime;
-    int targetLoopTime = 1000 / PWM_FREQ; // 20ms for 50Hz
-    
-    if (elapsedTime < targetLoopTime) {
-        // Wait to maintain consistent timing
-        delay(targetLoopTime - elapsedTime);
-    }
-    lastLoopTime = millis();
+    // Short delay
+    delay(20); // Adjust as needed for responsiveness
 }
 
 // Function to measure distance using HC-SR04 sonar sensor
