@@ -20,12 +20,20 @@
 #define CMD_SERVO1 16
 #define CMD_SERVO2 32
 #define CMD_SERVO3 64
-#define ENA_PIN 5  // The ESP32 pin GPIO14 connected to the ENA pin L298N
-#define IN1_PIN 16    // The ESP32 pin GPIO27 connected to the IN1 pin L298N
-#define IN2_PIN 17  // The ESP32 pin GPIO26 connected to the IN2 pin L298N
-#define IN3_PIN 2 // The ESP32 pin GPIO25 connected to the IN3 pin L298N
-#define IN4_PIN 4 // The ESP32 pin GPIO33 connected to the IN4 pin L298N
-#define ENB_PIN 15   // The ESP32 pin GPIO32 connected to the ENB pin L298N
+#define ENA_PIN 16  // Motor driver ENA pin
+#define IN1_PIN 17  // Motor driver IN1 pin
+#define IN2_PIN 5   // Motor driver IN2 pin
+#define IN3_PIN 18  // Motor driver IN3 pin
+#define IN4_PIN 19  // Motor driver IN4 pin
+#define ENB_PIN 21  // Motor driver ENB pin
+
+// LED indicator pin
+#define LED_PIN T2  // Using T2 pin for connection status LED
+
+// LED status variables
+bool clientConnected = false;
+unsigned long lastBlinkTime = 0;
+bool ledState = false;
 
 // Servo pins - modified to avoid conflict with motor pins
 #define SERVO1_PIN 13
@@ -43,8 +51,8 @@ Servo servo3;
 
 // Servo positions (0-180)
 int servo1Pos = 90;
-int servo2Pos = 40;
-int servo3Pos = 15;
+int servo2Pos = 90;
+int servo3Pos = 90;
 // Access point credentials
 const char* ap_ssid = "ESP32_RC_Car";     // Name of the access point
 const char* ap_password = "monggiadinhanlanh";     // Password for the access point (min 8 chars)
@@ -61,11 +69,16 @@ void webSocketEvent(uint8_t num, WStype_t type, uint8_t* payload, size_t length)
   switch (type) {
     case WStype_DISCONNECTED:
       Serial.printf("[%u] Disconnected!\n", num);
+      // Update connection status when all clients are disconnected
+      if (webSocket.connectedClients() == 0) {
+        clientConnected = false;
+      }
       break;
     case WStype_CONNECTED:
       {
         IPAddress ip = webSocket.remoteIP(num);
         Serial.printf("[%u] Connected from %d.%d.%d.%d\n", num, ip[0], ip[1], ip[2], ip[3]);
+        clientConnected = true;
       }
       break;
     case WStype_TEXT:
@@ -83,19 +96,25 @@ void webSocketEvent(uint8_t num, WStype_t type, uint8_t* payload, size_t length)
           // Process servo commands
           switch (cmd) {
             case CMD_SERVO1:
-              servo1Pos = pos;
-              servo1.write(servo1Pos);
-              Serial.printf("Setting Servo 1 to %d degrees\n", servo1Pos);
+              if (pos != servo1Pos) { // Only update if position changed
+                servo1Pos = pos;
+                servo1.write(servo1Pos);
+                Serial.printf("Setting Servo 1 to %d degrees\n", servo1Pos);
+              }
               break;
             case CMD_SERVO2:
-              servo2Pos = pos;
-              servo2.write(servo2Pos);
-              Serial.printf("Setting Servo 2 to %d degrees\n", servo2Pos);
+              if (pos != servo2Pos) { // Only update if position changed
+                servo2Pos = pos;
+                servo2.write(servo2Pos);
+                Serial.printf("Setting Servo 2 to %d degrees\n", servo2Pos);
+              }
               break;
             case CMD_SERVO3:
-              servo3Pos = pos;
-              servo3.write(servo3Pos);
-              Serial.printf("Setting Servo 3 to %d degrees\n", servo3Pos);
+              if (pos != servo3Pos) { // Only update if position changed
+                servo3Pos = pos;
+                servo3.write(servo3Pos);
+                Serial.printf("Setting Servo 3 to %d degrees\n", servo3Pos);
+              }
               break;
           }
         } 
@@ -157,7 +176,7 @@ void handleRoot() {
 }
 
 void setup() {
-  Serial.begin(9600);
+  Serial.begin(115200);
   Serial.println("ESP32 RC Car starting in AP mode...");
 
   // Configure motor pins
@@ -178,15 +197,15 @@ void setup() {
   
   // Attach servos to pins and configure
   servo1.setPeriodHertz(50);      // Standard 50Hz servo
-  servo1.attach(SERVO1_PIN, 500, 2400); // Adjust min/max pulse width if needed
+  servo1.attach(SERVO1_PIN, 544, 2400); // Adjust min/max pulse width if needed
   servo1.write(servo1Pos);         // Set to initial position
   
   servo2.setPeriodHertz(50);
-  servo2.attach(SERVO2_PIN, 500, 2400);
+  servo2.attach(SERVO2_PIN, 544, 2400);
   servo2.write(servo2Pos);
   
   servo3.setPeriodHertz(50);
-  servo3.attach(SERVO3_PIN, 500, 2400);
+  servo3.attach(SERVO3_PIN, 544, 2400);
   servo3.write(servo3Pos);
   
   Serial.println("Servos initialized");
@@ -207,6 +226,11 @@ void setup() {
   // Start server
   server.begin();
   Serial.println("HTTP server started");
+
+  // Configure LED pin
+  pinMode(LED_PIN, OUTPUT);
+  digitalWrite(LED_PIN, LOW);  // Start with LED off
+  Serial.println("LED indicator initialized on pin T2");
 }
 
 void configureWiFiAP() {
@@ -234,6 +258,20 @@ void configureWiFiAP() {
 void loop() {
   server.handleClient();  // Handle HTTP requests
   webSocket.loop();       // Handle WebSocket requests
+
+  // LED indicator logic
+  if (!clientConnected) {
+    // Blink LED at 1 second interval when waiting for connection
+    unsigned long currentTime = millis();
+    if (currentTime - lastBlinkTime >= 1000) {
+      lastBlinkTime = currentTime;
+      ledState = !ledState;
+      digitalWrite(LED_PIN, ledState);
+    }
+  } else {
+    // Keep LED on when client is connected
+    digitalWrite(LED_PIN, HIGH);
+  }
 }
 
 void CAR_moveForward() {
@@ -273,16 +311,27 @@ void CAR_turnRight() {
 }
 
 void CAR_stop() {
+  // First set the direction pins to LOW
   digitalWrite(IN1_PIN, LOW);
   digitalWrite(IN2_PIN, LOW);
   digitalWrite(IN3_PIN, LOW);
   digitalWrite(IN4_PIN, LOW);
+  
+  // Then reduce the speed to 0 to prevent any residual current
+  analogWrite(ENA_PIN, 0);
+  analogWrite(ENB_PIN, 0);
 }
 
 // New slow movement functions
 void CAR_moveForwardSlow() {
+  // First set speed to avoid current spikes
   analogWrite(ENA_PIN, MOTOR_SLOW_SPEED);
   analogWrite(ENB_PIN, MOTOR_SLOW_SPEED);
+  
+  // Small delay to allow PWM to stabilize
+  delay(5);
+  
+  // Then set direction
   digitalWrite(IN1_PIN, HIGH);
   digitalWrite(IN2_PIN, LOW);
   digitalWrite(IN3_PIN, HIGH);
@@ -290,8 +339,14 @@ void CAR_moveForwardSlow() {
 }
 
 void CAR_moveBackwardSlow() {
+  // First set speed to avoid current spikes
   analogWrite(ENA_PIN, MOTOR_SLOW_SPEED);
   analogWrite(ENB_PIN, MOTOR_SLOW_SPEED);
+  
+  // Small delay to allow PWM to stabilize
+  delay(5);
+  
+  // Then set direction
   digitalWrite(IN1_PIN, LOW);
   digitalWrite(IN2_PIN, HIGH);
   digitalWrite(IN3_PIN, LOW);
@@ -299,8 +354,14 @@ void CAR_moveBackwardSlow() {
 }
 
 void CAR_turnLeftSlow() {
+  // First set speed to avoid current spikes
   analogWrite(ENA_PIN, MOTOR_SLOW_SPEED);
   analogWrite(ENB_PIN, MOTOR_SLOW_SPEED);
+  
+  // Small delay to allow PWM to stabilize
+  delay(5);
+  
+  // Then set direction - only activate necessary motors
   digitalWrite(IN1_PIN, HIGH);
   digitalWrite(IN2_PIN, LOW);
   digitalWrite(IN3_PIN, LOW);
@@ -308,22 +369,16 @@ void CAR_turnLeftSlow() {
 }
 
 void CAR_turnRightSlow() {
+  // First set speed to avoid current spikes
   analogWrite(ENA_PIN, MOTOR_SLOW_SPEED);
   analogWrite(ENB_PIN, MOTOR_SLOW_SPEED);
+  
+  // Small delay to allow PWM to stabilize
+  delay(5);
+  
+  // Then set direction - only activate necessary motors
   digitalWrite(IN1_PIN, LOW);
   digitalWrite(IN2_PIN, LOW);
   digitalWrite(IN3_PIN, HIGH);
   digitalWrite(IN4_PIN, LOW);
-}
-
-void moveServo1() {
-  servo1.write(servo1Pos);
-}
-
-void moveServo2() {
-  servo2.write(servo2Pos);
-}
-
-void moveServo3() {
-  servo3.write(servo3Pos);
 }
