@@ -1,72 +1,63 @@
 /* ESP32
- * Self Driving Car - Line Following with PID Control
- * Using L298N motor driver, HW-871 line sensors, and HC-SR04 sonar sensor
+ * Self Driving Car - Simple Line Following
+ * Using L298N motor driver and digital line sensors
  */
 
 #include <Arduino.h>
 
 // Pin definitions for L298N motor driver
-#define ENA 21  // PWM control for right motors
-#define ENB 19  // PWM control for left motors
-#define IN1 16  // Right motors direction 1
-#define IN2 17  // Right motors direction 2
-#define IN3 2   // Left motors direction 1
-#define IN4 4   // Left motors direction 2
+#define ENA 5  // PWM control for right motors
+#define ENB 18  // PWM control for left motors
+#define IN1 2   // Right motors direction 1
+#define IN2 4   // Right motors direction 2
+#define IN3 16  // Left motors direction 1
+#define IN4 17  // Left motors direction 2
 
-// Pin definitions for line sensors (using digital reading with Schmitt triggers)
-#define SENSOR_1 26  // Leftmost sensor
-#define SENSOR_2 25
-#define SENSOR_3 33  // Middle sensor
-#define SENSOR_4 32
-#define SENSOR_5 35  // Rightmost sensor
-
-// Pin definitions for HC-SR04 sonar sensor
-#define TRIGGER_PIN 14
-#define ECHO_PIN 27
-
-// Define onboard LED pin
-#define LED_PIN T2
-
-// Line color mode (1 = follow black line on white, 0 = follow white line on black)
-// Easily change this value instead of using a toggle button
-int followBlackLine = 1;  // Default to black line following
-
-// PID control constants - adjust these based on testing
-float Kp = 0.38;     // Proportional gain
-float Ki = 0.03;     // Integral gain 
-float Kd = 0.1;      // Derivative gain
-
-// PWM control frequency
-#define PWM_FREQ 50  // 50Hz for smoother motor control
-
-// PID variables
-float previousError = 0;
-float integral = 0;
-unsigned long previousTime = 0;
-float maxIntegral = 100.0;  // Anti-windup limit for integral term
+// Pin definitions for line sensors (digital sensors)
+#define LEFT_MOST 13  // Leftmost sensor
+#define LEFT_INNER 12 // Left inner sensor
+#define RIGHT_INNER 14 // Right inner sensor
+#define RIGHT_MOST 27 // Rightmost sensor
 
 // Motor speed variables
 int baseSpeed = 255;  // Base speed for motors, range 0-255
+int turnSpeed = 170;   // Regular speed for inner wheel in slight turns (changed from negative value)
+int hardTurnSpeed = -240; // Reversed speed for inner wheel in hard turns
+int reducedTurnSpeed = 160; // Speed for the reduced speed side during turns
 
-// Add debug mode for sensors
+// Remove wheel locking control variables
 #define DEBUG_MODE true
 
 // PWM properties for ESP32
 const int freq = 5000;
 const int resolution = 8;  // 8-bit resolution, 0-255
 
-// Sonar variables
-const int maxDistance = 200; // Maximum distance in cm
-long duration, distance;     // Variables for sonar measurements
+// For emergency recovery
+bool finishLineDetected = false; // DONT CHANGE THIS
+// This variable is used to indicate if the finish line has been detected
+
+// For LED blinking patterns
+unsigned long lastLedToggle = 0;
+int ledBlinkInterval = 500; // Default blink interval in ms
+
+// For emergency recovery
+#define RECOVERY_TURN_DIRECTION 1  // 1 = right turn, -1 = left turn
+
+// For improved turning logic
+int lastActiveSensor = 0; // 0=none, -2=leftmost, -1=left inner, 1=right inner, 2=rightmost
+bool inHardLeftTurn = false;
+bool inHardRightTurn = false;
+unsigned long turnStartTime = 0;
+const unsigned long MIN_TURN_TIME = 0; // Minimum turn time in milliseconds
 
 void setup() {
     // Initialize serial for debugging
     Serial.begin(115200);
     Serial.println("ESP32 Self-Driving Car starting...");
     
-    // Configure LED
-    pinMode(LED_PIN, OUTPUT);
-    digitalWrite(LED_PIN, HIGH); // Turn off LED (may be inverted on some boards)
+    // Comment out LED configuration
+    // pinMode(LED_PIN, OUTPUT);
+    // digitalWrite(LED_PIN, HIGH); // Turn off LED (may be inverted on some boards)
     
     // Configure motor control pins
     pinMode(IN1, OUTPUT);
@@ -74,81 +65,34 @@ void setup() {
     pinMode(IN3, OUTPUT);
     pinMode(IN4, OUTPUT);
     
-    // Configure ESP32 PWM for motor control using the new API (ESP32 v3.x)
-    ledcAttach(ENA, PWM_FREQ, resolution);
-    ledcAttach(ENB, PWM_FREQ, resolution);
+    // Configure ESP32 PWM for motor control using newer ledcAttach function
+    // This automatically selects appropriate channels
+    ledcAttach(ENA, freq, resolution);  // Automatically assigns a channel for ENA
+    ledcAttach(ENB, freq, resolution);  // Automatically assigns a channel for ENB
     
-    // Initialize line sensor pins with INPUT mode (digital sensors with Schmitt triggers)
-    pinMode(SENSOR_1, INPUT);
-    pinMode(SENSOR_2, INPUT);
-    pinMode(SENSOR_3, INPUT);
-    pinMode(SENSOR_4, INPUT);
-    pinMode(SENSOR_5, INPUT);
+    // Initialize line sensor pins
+    pinMode(LEFT_MOST, INPUT);
+    pinMode(LEFT_INNER, INPUT);
+    pinMode(RIGHT_INNER, INPUT);
+    pinMode(RIGHT_MOST, INPUT);
     
-    // Initialize sonar sensor pins
-    pinMode(TRIGGER_PIN, OUTPUT);
-    pinMode(ECHO_PIN, INPUT);
-    
-    // Show current line following mode with LED blinks
-    for (int i = 0; i < (followBlackLine ? 2 : 3); i++) {
-        digitalWrite(LED_PIN, LOW);  // LED on
-        delay(200);
-        digitalWrite(LED_PIN, HIGH); // LED off
-        delay(200);
+    // Countdown before starting - without LED flashing
+    Serial.println("Starting in:");
+    for (int i = 3; i > 0; i--) {
+        Serial.println(i);
+        delay(1000);
     }
     
-    Serial.print("Line tracking mode set to follow ");
-    Serial.println(followBlackLine ? "BLACK line" : "WHITE line");
-    
-    Serial.println("Ready to drive!");
-    delay(1000); // Short delay before starting
-}
-
-// Function to calculate motor speeds based on correction
-void calculateMotorSpeeds(float correction, int *leftSpeed, int *rightSpeed) {
-    // Base speed for both motors
-    int leftBase = baseSpeed;
-    int rightBase = baseSpeed;
-    
-    // Calculate turn ratio (0.0 to 1.0) based on correction
-    // Normalize the correction value (typical range -100 to 100)
-    float maxCorrection = 100.0;
-    float turnRatio = constrain(abs(correction) / maxCorrection, 0.0, 1.0);
-    
-    // Apply non-linear scaling for more responsive turns
-    // Square the turnRatio for more aggressive turning at high corrections
-    float scaledTurnRatio = turnRatio * turnRatio;
-    
-    // Calculate minimum speed for the slower motor (for sharp turns)
-    int minSpeed = baseSpeed * 0.2; // 20% of base speed for the slower wheel
-    
-    if (correction > 0) {
-        // Need to turn right
-        *leftSpeed = leftBase;
-        // Scale right motor speed down based on correction
-        *rightSpeed = rightBase - (rightBase - minSpeed) * scaledTurnRatio;
-    } else {
-        // Need to turn left
-        *rightSpeed = rightBase;
-        // Scale left motor speed down based on correction
-        *leftSpeed = leftBase - (leftBase - minSpeed) * scaledTurnRatio;
-    }
-    
-    if (DEBUG_MODE) {
-        Serial.print("Turn ratio: ");
-        Serial.print(turnRatio);
-        Serial.print(" Scaled: ");
-        Serial.println(scaledTurnRatio);
-    }
+    Serial.println("GO!");
 }
 
 // Function to control motors
 void setMotors(int leftSpeed, int rightSpeed) {
     // Constrain speeds to valid PWM range
-    leftSpeed = constrain(leftSpeed, 0, 255);
-    rightSpeed = constrain(rightSpeed, 0, 255);
+    leftSpeed = constrain(leftSpeed, -255, 255);
+    rightSpeed = constrain(rightSpeed, -255, 255);
     
-    // Left motors direction
+    // Left motors
     if (leftSpeed >= 0) {
         digitalWrite(IN1, HIGH);
         digitalWrite(IN2, LOW);
@@ -158,9 +102,9 @@ void setMotors(int leftSpeed, int rightSpeed) {
         leftSpeed = -leftSpeed;  // Convert negative speed to positive PWM value
     }
     
-    // Right motors direction
+    // Right motors
     if (rightSpeed >= 0) {
-        digitalWrite(IN3, HIGH);
+        digitalWrite(IN3, HIGH); 
         digitalWrite(IN4, LOW);
     } else {
         digitalWrite(IN3, LOW);
@@ -168,9 +112,9 @@ void setMotors(int leftSpeed, int rightSpeed) {
         rightSpeed = -rightSpeed;  // Convert negative speed to positive PWM value
     }
     
-    // Apply PWM speed control using ESP32's ledcWrite for the channels
-    ledcWrite(0, rightSpeed);  // Channel 0 controls ENA (right motors)
-    ledcWrite(1, leftSpeed);   // Channel 1 controls ENB (left motors)
+    // Apply PWM speed control using pin-based ledcWrite for the newer API
+    ledcWrite(ENA, leftSpeed);   // Writing to ENA pin for left motors
+    ledcWrite(ENB, rightSpeed);  // Writing to ENB pin for right motors
     
     if (DEBUG_MODE) {
         Serial.print("Motors: L=");
@@ -186,297 +130,193 @@ void stopMotors() {
     digitalWrite(IN2, LOW);
     digitalWrite(IN3, LOW);
     digitalWrite(IN4, LOW);
-    
-    // Stop motors by setting PWM to 0 on both channels
-    ledcWrite(0, 0);  // Channel 0 (ENA)
-    ledcWrite(1, 0);  // Channel 1 (ENB)
-    
+    ledcWrite(ENA, 0); // Stop right motors50
+    ledcWrite(ENB, 0); // Stop left motors
     Serial.println("Motors stopped");
 }
 
-// Read line position using digital readings
-float readLinePosition() {
-    int sensorValues[5];
-    
-    // Read sensors with digital values (1 = line detected, 0 = no line)
-    // Inverted based on whether we're following black or white line
-    if (followBlackLine) {
-        // Following black line (digital sensors output LOW when black line is detected)
-        sensorValues[0] = !digitalRead(SENSOR_1);
-        sensorValues[1] = !digitalRead(SENSOR_2);
-        sensorValues[2] = !digitalRead(SENSOR_3);
-        sensorValues[3] = !digitalRead(SENSOR_4);
-        sensorValues[4] = !digitalRead(SENSOR_5);
-    } else {
-        // Following white line (digital sensors output HIGH when white line is detected)
-        sensorValues[0] = digitalRead(SENSOR_1);
-        sensorValues[1] = digitalRead(SENSOR_2);
-        sensorValues[2] = digitalRead(SENSOR_3);
-        sensorValues[3] = digitalRead(SENSOR_4);
-        sensorValues[4] = digitalRead(SENSOR_5);
-    }
+// Read line sensor values and return control decision
+int readSensors() {
+    // Read digital values from the 4 sensors
+    // CORRECTED: Digital reading: 1 for black line, 0 for white surface
+    int leftMost = digitalRead(LEFT_MOST);
+    int leftInner = digitalRead(LEFT_INNER);
+    int rightInner = digitalRead(RIGHT_INNER);
+    int rightMost = digitalRead(RIGHT_MOST);
     
     if (DEBUG_MODE) {
-        // Print sensor readings for debugging
-        Serial.print("Sensors: ");
-        for (int i = 0; i < 5; i++) {
-            Serial.print(sensorValues[i]);
-            Serial.print(" ");
-        }
-        Serial.print("| Mode: ");
-        Serial.println(followBlackLine ? "BLACK" : "WHITE");
+        Serial.print("Sensors: LM=");
+        Serial.print(leftMost);
+        Serial.print(" LI=");
+        Serial.print(leftInner);
+        Serial.print(" RI=");
+        Serial.print(rightInner);
+        Serial.print(" RM=");
+        Serial.println(rightMost);
     }
 
-    // Check for finish line (all sensors reading the same line)
-    bool allSame = true;
-    for (int i = 1; i < 5; i++) {
-        if (sensorValues[i] != sensorValues[0]) {
-            allSame = false;
-            break;
-        }
-    }
-    
-    // Finish line is when all sensors detect line (all 1s)
-    if (allSame && sensorValues[0] == 1) {
+    // Check for finish line (all sensors reading black)
+    if (leftMost == 1 && leftInner == 1 && rightInner == 1 && rightMost == 1) {
         // Added debounce to prevent false detections
         delay(50);
         
         // Read again to confirm
-        int confirmValues[5];
-        if (followBlackLine) {
-            confirmValues[0] = !digitalRead(SENSOR_1);
-            confirmValues[1] = !digitalRead(SENSOR_2);
-            confirmValues[2] = !digitalRead(SENSOR_3);
-            confirmValues[3] = !digitalRead(SENSOR_4);
-            confirmValues[4] = !digitalRead(SENSOR_5);
-        } else {
-            confirmValues[0] = digitalRead(SENSOR_1);
-            confirmValues[1] = digitalRead(SENSOR_2);
-            confirmValues[2] = digitalRead(SENSOR_3);
-            confirmValues[3] = digitalRead(SENSOR_4);
-            confirmValues[4] = digitalRead(SENSOR_5);
-        }
-        
-        // Check if still all 1s
-        bool stillAllSame = true;
-        for (int i = 1; i < 5; i++) {
-            if (confirmValues[i] != confirmValues[0] || confirmValues[0] != 1) {
-                stillAllSame = false;
-                break;
-            }
-        }
+        leftMost = digitalRead(LEFT_MOST);
+        leftInner = digitalRead(LEFT_INNER);
+        rightInner = digitalRead(RIGHT_INNER);
+        rightMost = digitalRead(RIGHT_MOST);
         
         // Only stop if still detecting finish line
-        if (stillAllSame) {
-            stopMotors();  // Stop motors immediately
-            Serial.println("Finish line detected! Stopping.");
-            
-            // Blink LED forever
-            while (1) { 
-                digitalWrite(LED_PIN, LOW);  // LED on (active LOW)
-                delay(500);
-                digitalWrite(LED_PIN, HIGH); // LED off
-                delay(500);
-            }
-            
-            return 999;  // Special value for finish line
+        if (leftMost == 1 && leftInner == 1 && rightInner == 1 && rightMost == 1) {
+            finishLineDetected = true;
+            return 0; // Stop
         }
     }
 
-    // Calculate weighted position using a simpler approach
-    int sum = 0;
-    int weightedSum = 0;
-    int sensorPositions[5] = {0, 1000, 2000, 3000, 4000}; // Position values for each sensor
-
-    for (int i = 0; i < 5; i++) {
-        sum += sensorValues[i];
-        weightedSum += sensorValues[i] * sensorPositions[i];
+    // Check for "out of track" - all sensors reading white
+    if (leftMost == 0 && leftInner == 0 && rightInner == 0 && rightMost == 0) {
+        if (DEBUG_MODE) {
+            Serial.println("All sensors white - continuing last direction");
+        }
+        
+        // Continue turning in the last direction until line is found again
+        if (lastActiveSensor < 0) {
+            return -2; // Continue turning left based on last detection
+        } else if (lastActiveSensor > 0) {
+            return 2; // Continue turning right based on last detection
+        } else {
+            return 10; // Forward if no previous direction
+        }
     }
 
-    // If no line is detected
-    if (sum == 0) {
-        return previousError;  // Return last known error
+    // Handle turn transitions and sensor tracking
+    
+    // Hard left turn initiated by leftmost sensor
+    if (leftMost == 1) {
+        lastActiveSensor = -2;
+        inHardLeftTurn = true;
+        inHardRightTurn = false;
+        turnStartTime = millis();
+        return -2; // Hard left turn
+    }
+    
+    // Hard right turn initiated by rightmost sensor
+    if (rightMost == 1) {
+        lastActiveSensor = 2;
+        inHardRightTurn = true;
+        inHardLeftTurn = false;
+        turnStartTime = millis();
+        return 2; // Hard right turn
     }
 
-    // Calculate position (0-4000)
-    float position = weightedSum / sum;
-
-    // Convert to error value (-2000 to +2000)
-    // Middle position is 2000, so error = position - 2000
-    return position - 2000;
-}
-
-// Function for simple line-following control without PID
-float calculateSimpleCorrection(float error) {
-    // Simple proportional control with a non-linear response
-    // This creates more aggressive corrections for larger errors
-    float correction = error * 0.04; // Simple proportional factor
-    
-    // Add non-linear component for more aggressive turns when far from line
-    if (abs(error) > 1000) {
-        correction *= 1.5; // Boost correction for large errors
+    // Check if we should exit a hard turn when inner sensor detects line
+    if (inHardLeftTurn && leftInner == 1) {
+        // Exit hard left turn if inner left sensor sees the line again
+        // and minimum turn time has passed
+        if (millis() - turnStartTime > MIN_TURN_TIME) {
+            inHardLeftTurn = false;
+            lastActiveSensor = -1;
+            return -1; // Switch to slight left turn
+        } else {
+            return -2; // Continue hard left turn until minimum time
+        }
     }
     
-    if (DEBUG_MODE) {
-        Serial.print("Line Error: ");
-        Serial.print(error);
-        Serial.print(" Correction: ");
-        Serial.println(correction);
+    if (inHardRightTurn && rightInner == 1) {
+        // Exit hard right turn if inner right sensor sees the line again
+        // and minimum turn time has passed
+        if (millis() - turnStartTime > MIN_TURN_TIME) {
+            inHardRightTurn = false;
+            lastActiveSensor = 1;
+            return 1; // Switch to slight right turn
+        } else {
+            return 2; // Continue hard right turn until minimum time
+        }
     }
     
-    return correction;
-}
-
-// Function to calculate PID correction with anti-windup
-float calculatePIDCorrection(float error) {
-    unsigned long currentTime = millis();
-    float deltaTime = (currentTime - previousTime) / 1000.0; // Convert to seconds
-    
-    // Prevent division by zero or extremely small time intervals
-    if (deltaTime < 0.001) {
-        deltaTime = 0.001;
+    // Continue hard turns if we're in one
+    if (inHardLeftTurn) {
+        return -2;
+    }
+    if (inHardRightTurn) {
+        return 2;
     }
     
-    // Calculate the integral term
-    integral += error * deltaTime;
-    
-    // Anti-windup for integral term - limit the integral to prevent excessive buildup
-    integral = constrain(integral, -maxIntegral, maxIntegral);
-    
-    // Calculate derivative (with some filtering to reduce noise)
-    float derivative = (error - previousError) / deltaTime;
-    
-    // PID formula
-    float output = Kp * error + Ki * integral + Kd * derivative;
-    
-    // Additional anti-windup: back-calculation method
-    float outputMax = 100.0;  // Maximum allowed output
-    if (output > outputMax) {
-        // Scale back the integral term when output is saturated
-        integral -= (output - outputMax) * 0.1;  // 0.1 is back-calculation gain
-        output = outputMax;
-    } else if (output < -outputMax) {
-        // Scale back the integral term when output is saturated
-        integral -= (output + outputMax) * 0.1;  // 0.1 is back-calculation gain
-        output = -outputMax;
+    // Normal line following for slight turns
+    if (leftInner == 1) {
+        lastActiveSensor = -1;
+        return -1; // Slight left turn
     }
     
-    // Update state for next iteration
-    previousError = error;
-    previousTime = currentTime;
-    
-    if (DEBUG_MODE) {
-        Serial.print("PID: P=");
-        Serial.print(Kp * error);
-        Serial.print(" I=");
-        Serial.print(Ki * integral);
-        Serial.print(" D=");
-        Serial.print(Kd * derivative);
-        Serial.print(" Output=");
-        Serial.println(output);
+    if (rightInner == 1) {
+        lastActiveSensor = 1;
+        return 1; // Slight right turn
     }
     
-    return output;
+    // Default - go forward
+    return 10; // Forward
 }
 
 void loop() {
-    // Measure distance to any obstacles in front
-    int obstacleDistance = measureDistance();
-    
-    // Adjust base speed for climbing stairs when distance is less than 4cm
-    if (obstacleDistance < 4) {
-        baseSpeed = 180; // Reduce speed for climbing stairs
-        if (DEBUG_MODE) {
-            Serial.println("Stair detected! Reducing speed for climbing.");
-        }
-    } else {
-        baseSpeed = 240; // Normal speed operation
-    }
-    
-    // Check if there's an obstacle too close (emergency stop)
-    if (obstacleDistance < 2) { // Extremely close obstacle
-        // Stop car
-        stopMotors();
-        Serial.print("Obstacle too close at ");
-        Serial.print(obstacleDistance);
-        Serial.println("cm. Stopping.");
-        
-        // Wait briefly
-        delay(300);
-        return; // Return to beginning of loop to reassess
-    }
-
     // Read line position
-    float error = readLinePosition();
+    int controlDecision = readSensors();
 
-    // Check for finish line (this is handled in readLinePosition)
-    if (error == 999) {
-        return; // Already stopped in readLinePosition
+    // Check for finish line detection
+    if (finishLineDetected) {
+        stopMotors();
+        
+        // Don't use LED for finish line indication
+        if (DEBUG_MODE && (millis() - lastLedToggle > 2000)) {
+            Serial.println("Finish line detected! Car stopped.");
+            lastLedToggle = millis();
+        }
+        return;
     }
 
-    // Use PID control with anti-windup for smoother operation
-    float correction = calculatePIDCorrection(error);
-
-    // Calculate motor speeds based on PID correction
-    int leftSpeed, rightSpeed;
-    
-    // Apply PID correction to motor speeds
-    leftSpeed = baseSpeed - correction;
-    rightSpeed = baseSpeed + correction;
-    
-    // Ensure speeds are within valid range
-    leftSpeed = constrain(leftSpeed, 0, 255);
-    rightSpeed = constrain(rightSpeed, 0, 255);
-    
-    // Apply motor speeds - ensuring we're not completely stopping any side
-    // This provides smoother turns for the rover
-    if (leftSpeed < 70) leftSpeed = 70;  // Minimum power to keep motors turning
-    if (rightSpeed < 70) rightSpeed = 70;
-    
-    setMotors(leftSpeed, rightSpeed);
-
-    // Maintain loop timing for consistent 50Hz control rate
-    static unsigned long lastLoopTime = 0;
-    unsigned long currentTime = millis();
-    unsigned long elapsedTime = currentTime - lastLoopTime;
-    int targetLoopTime = 1000 / PWM_FREQ; // 20ms for 50Hz
-    
-    if (elapsedTime < targetLoopTime) {
-        // Wait to maintain consistent timing
-        delay(targetLoopTime - elapsedTime);
+    // Apply control decision to motors
+    switch (controlDecision) {
+        case 1: // Slight right turn
+            setMotors(baseSpeed, turnSpeed); // Use regular turn speed instead of negative
+            if (DEBUG_MODE) Serial.println("Slight right turn");
+            break;
+            
+        case -1: // Slight left turn
+            setMotors(turnSpeed, baseSpeed); // Use regular turn speed instead of negative
+            if (DEBUG_MODE) Serial.println("Slight left turn");
+            break;
+            
+        case 2: // Hard right turn
+            setMotors(baseSpeed, hardTurnSpeed); // Keep baseSpeed for left motor, reverse for right
+            if (DEBUG_MODE) Serial.println("Hard right turn");
+            break;
+            
+        case -2: // Hard left turn
+            setMotors(hardTurnSpeed, baseSpeed); // Reverse for left motor, keep baseSpeed for right
+            if (DEBUG_MODE) Serial.println("Hard left turn");
+            break;
+            
+        case 0: // Stop (finish line)
+            stopMotors();
+            finishLineDetected = true;
+            if (DEBUG_MODE) Serial.println("Finish line detected! Car stopped.");
+            break;
+            
+        case 3: // Recovery right turn
+            setMotors(baseSpeed, -turnSpeed);
+            if (DEBUG_MODE) Serial.println("Recovery right turn");
+            break;
+            
+        case -3: // Recovery left turn
+            setMotors(-turnSpeed, baseSpeed);
+            if (DEBUG_MODE) Serial.println("Recovery left turn");
+            break;
+            
+        default: // Forward
+            setMotors(baseSpeed, baseSpeed);
+            if (DEBUG_MODE) Serial.println("Going forward");
+            break;
     }
-    lastLoopTime = millis();
-}
 
-// Function to measure distance using HC-SR04 sonar sensor
-int measureDistance() {
-    // Clear the trigger pin
-    digitalWrite(TRIGGER_PIN, LOW);
-    delayMicroseconds(2);
-    
-    // Send 10μs pulse to trigger
-    digitalWrite(TRIGGER_PIN, HIGH);
-    delayMicroseconds(10);
-    digitalWrite(TRIGGER_PIN, LOW);
-    
-    // Read echo pin (duration in microseconds)
-    duration = pulseIn(ECHO_PIN, HIGH, 30000); // 30ms timeout
-    
-    // Calculate distance in centimeters
-    // Speed of sound is ~343m/s = 0.0343cm/μs
-    // Distance = time * speed / 2 (round-trip)
-    distance = (duration * 0.0343) / 2;
-    
-    // Check for timeout or invalid reading
-    if (duration == 0 || distance > maxDistance || distance <= 0) {
-        distance = maxDistance; // Default to max distance on error
-    }
-    
-    if (DEBUG_MODE) {
-        Serial.print("Distance: ");
-        Serial.print(distance);
-        Serial.println(" cm");
-    }
-    
-    return distance;
+    // Short delay
+    delay(25); // Adjust as needed for responsiveness
 }
