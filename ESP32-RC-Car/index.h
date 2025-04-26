@@ -6,467 +6,398 @@
  * For more detail (instruction and wiring diagram), visit https://esp32io.com/tutorials/esp32-controls-car-via-web
  */
 
- const char *HTML_CONTENT = R"=====(
+ const char HTML_CONTENT[] PROGMEM = R"rawliteral(
     <!DOCTYPE html>
     <html>
     <head>
-    <title>ESP32 Control Car via Web</title>
-    <meta name="viewport" content="width=device-width, initial-scale=0.7, maximum-scale=1, user-scalable=no">
-    <style type="text/css">
-    body { text-align: center; font-size: 24px;}
-    button { text-align: center; font-size: 24px;}
-    #container {
-        margin-right: auto;
-        margin-left: auto;
-        width: 400px; 
-        height: 400px;
-        position: relative;
-        margin-bottom: 10px;
-    }
-    div[class^='button'] { 
-        position: absolute;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        border-radius: 15px;
-        border: 3px solid #333;
-        color: white;
-        font-weight: bold;
-        cursor: pointer;
-        transition: background-color 0.2s;
-    }
-    .button_up, .button_down { width:214px; height:104px;}
-    .button_left, .button_right { width:104px; height:214px;}
-    .button_stop { width:178px; height:178px;}
-    .button_up {
-        background-color: #4CAF50;
-        left: 200px;
-        top: 0px;
-        transform: translateX(-50%);
-    }
-    
-    .button_down {
-        background-color: #f44336;
-        left:200px;
-        bottom: 0px;
-        transform: translateX(-50%);
-    }
-    
-    .button_right {
-        background-color: #2196F3;
-        right: 0px;
-        top: 200px;
-        transform: translateY(-50%);
-    }
-    
-    .button_left {
-        background-color: #2196F3;
-        left:0px;
-        top: 200px;
-        transform: translateY(-50%);
-    }
-    
-    .button_stop {
-        background-color: #FF9800;
-        left:200px;
-        top: 200px;
-        transform: translate(-50%, -50%);
-    }
-    
-    .active {
-        background-color: #555 !important;
-        transform: scale(0.95) translateX(-50%);
-    }
-    
-    .button_up.active, .button_down.active {
-        transform: scale(0.95) translateX(-50%);
-    }
-    
-    .button_left.active, .button_right.active {
-        transform: scale(0.95) translateY(-50%);
-    }
-    
-    .button_stop.active {
-        transform: scale(0.95) translate(-50%, -50%);
-    }
-
-    /* Servo Control Styles */
-    .servo-controls {
-        width: 90%;
-        max-width: 400px;
-        margin: 20px auto;
-        padding: 15px;
-        border: 2px solid #333;
-        border-radius: 10px;
-        background-color: #f0f0f0;
-    }
-
-    .slider-container {
-        margin: 15px 0;
-    }
-
-    .slider-container label {
-        display: block;
-        margin-bottom: 5px;
-        font-weight: bold;
-        color: #333;
-    }
-
-    .servo-value {
-        font-weight: bold;
-        color: #2196F3;
-        margin: 10px 0;
-        font-size: 28px;
-    }
-
-    .slider-actions {
-        display: flex;
-        justify-content: space-around;
-        margin-top: 5px;
-    }
-
-    .slider-actions button {
-        padding: 12px 20px;
-        font-size: 24px;
-        background-color: #4CAF50;
-        color: white;
-        border: none;
-        border-radius: 5px;
-        cursor: pointer;
-        margin: 0 5px;
-        min-width: 60px;
-        user-select: none;
-        -webkit-user-select: none;
-    }
-
-    .slider-actions button.decrease {
-        background-color: #f44336;
-    }
-
-    .slider-actions button.action {
-        background-color: #2196F3;
-    }
-
-    .slider-actions button:hover {
-        filter: brightness(1.1);
-    }
-    
-    .slider-actions button:active {
-        transform: scale(0.95);
-    }
-    </style>
-    <script>
-    var CMD_STOP     = 0;
-    var CMD_FORWARD  = 1;
-    var CMD_BACKWARD = 2;
-    var CMD_LEFT     = 4;
-    var CMD_RIGHT    = 8;
-    var CMD_SERVO1   = 16;
-    var CMD_SERVO2   = 32;
-    var CMD_SERVO3   = 64;
-    var CMD_SERVO4   = 128;
-    var buttonText = {
-      [CMD_STOP]:     "STOP",
-      [CMD_FORWARD]:  "FORWARD",
-      [CMD_BACKWARD]: "BACKWARD",
-      [CMD_LEFT]:     "LEFT",
-      [CMD_RIGHT]:    "RIGHT"
-    }
-    var ws = null;
-    var servoIntervals = {
-      servo1: null,
-      servo2: null, 
-      servo3: null,
-      servo4: null
-    };
-    var updateRate = 100; // Update servo position every 100ms (very slow)
-    var adjustStep = 1; // Degrees to change per update
-    
-    function init() 
-    {
-      var container = document.querySelector("#container");
-        container.addEventListener("touchstart", mouse_down);
-        container.addEventListener("touchend", mouse_up);
-        container.addEventListener("touchcancel", mouse_up);
-        container.addEventListener("mousedown", mouse_down);
-        container.addEventListener("mouseup", mouse_up);
-        container.addEventListener("mouseout", mouse_up);    
-
-      // Initialize servo values
-      updateServoDisplay('servo1', 90);
-      updateServoDisplay('servo2', 90);
-      updateServoDisplay('servo3', 90);
-      updateServoDisplay('servo4', 90);
-      
-      // Set up event listeners for servo control buttons
-      setupServoControlButtons();
-    }
-
-    function setupServoControlButtons() {
-      var servoIds = ['servo1', 'servo2', 'servo3', 'servo4'];
-      var cmdIds = [CMD_SERVO1, CMD_SERVO2, CMD_SERVO3, CMD_SERVO4];
-      
-      servoIds.forEach((servoId, index) => {
-        // Decrease button - press and hold
-        var decreaseBtn = document.getElementById(servoId + 'Decrease');
-        decreaseBtn.addEventListener('mousedown', () => startServoAdjustment(servoId, -adjustStep, cmdIds[index]));
-        decreaseBtn.addEventListener('touchstart', (e) => {
-          e.preventDefault();
-          startServoAdjustment(servoId, -adjustStep, cmdIds[index]);
-        });
-        
-        // Increase button - press and hold
-        var increaseBtn = document.getElementById(servoId + 'Increase');
-        increaseBtn.addEventListener('mousedown', () => startServoAdjustment(servoId, adjustStep, cmdIds[index]));
-        increaseBtn.addEventListener('touchstart', (e) => {
-          e.preventDefault();
-          startServoAdjustment(servoId, adjustStep, cmdIds[index]);
-        });
-        
-        // Stop adjustment when releasing button (for both buttons)
-        [decreaseBtn, increaseBtn].forEach(btn => {
-          btn.addEventListener('mouseup', () => stopServoAdjustment(servoId));
-          btn.addEventListener('mouseleave', () => stopServoAdjustment(servoId));
-          btn.addEventListener('touchend', () => stopServoAdjustment(servoId));
-          btn.addEventListener('touchcancel', () => stopServoAdjustment(servoId));
-        });
-      });
-    }
-    
-    function startServoAdjustment(servoId, step, cmdId) {
-      // Clear any existing interval
-      stopServoAdjustment(servoId);
-      
-      // Start continuous adjustment
-      servoIntervals[servoId] = setInterval(() => {
-        var newValue = adjustServo(servoId, step);
-        
-        // Send the new value immediately to update the servo
-        if (ws != null && ws.readyState == 1) {
-          ws.send(cmdId + ":" + newValue + "\r\n");
-        }
-      }, updateRate);
-    }
-    
-    function stopServoAdjustment(servoId) {
-      if (servoIntervals[servoId]) {
-        clearInterval(servoIntervals[servoId]);
-        servoIntervals[servoId] = null;
-      }
-    }
-
-    function updateServoDisplay(servoId, value) {
-      var display = document.getElementById(servoId + 'Value');
-      display.textContent = value + '°';
-      // Store the current value as a data attribute
-      display.setAttribute('data-value', value);
-    }
-    
-    function adjustServo(servoId, amount) {
-      var display = document.getElementById(servoId + 'Value');
-      var currentValue = parseInt(display.getAttribute('data-value')) || 90;
-      var newValue = Math.max(0, Math.min(180, currentValue + amount));
-      
-      updateServoDisplay(servoId, newValue);
-      return newValue;
-    }
-    
-    function ws_onmessage(e_msg)
-    {
-        e_msg = e_msg || window.event; // MessageEvent
-     
-        //alert("msg : " + e_msg.data);
-    }
-    function ws_onopen()
-    {
-      document.getElementById("ws_state").innerHTML = "OPEN";
-      document.getElementById("wc_conn").innerHTML = "Disconnect";
-    }
-    function ws_onclose()
-    {
-      document.getElementById("ws_state").innerHTML = "CLOSED";
-      document.getElementById("wc_conn").innerHTML = "Connect";
-      console.log("socket was closed");
-      ws.onopen = null;
-      ws.onclose = null;
-      ws.onmessage = null;
-      ws = null;
-    }
-    function wc_onclick()
-    {
-      if(ws == null)
-      {
-        ws = new WebSocket("ws://" + window.location.host + ":81");
-        document.getElementById("ws_state").innerHTML = "CONNECTING";
-        
-        ws.onopen = ws_onopen;
-        ws.onclose = ws_onclose;
-        ws.onmessage = ws_onmessage; 
-      }
-      else
-        ws.close();
-    }
-    function mouse_down(event) 
-    {
-      if (event.target !== event.currentTarget) 
-      {
-        var id = event.target.id;
-        send_command(id);
-        event.target.classList.add('active');
-      }
-      event.stopPropagation();    
-      event.preventDefault();    
-    }
-    
-    function mouse_up(event) 
-    {
-      if (event.target !== event.currentTarget) 
-      {
-        var id = event.target.id;
-        send_command(CMD_STOP);
-        event.target.classList.remove('active');
-      }
-      event.stopPropagation();   
-      event.preventDefault();    
-    }
-    function send_command(cmd) 
-    {   
-      if(ws != null)
-        if(ws.readyState == 1)
-          ws.send(cmd + "\r\n");   
-    }
-    
-    function setServoPosition(servoCmd) {
-      var servoId;
-      switch(servoCmd) {
-        case CMD_SERVO1: servoId = 'servo1'; break;
-        case CMD_SERVO2: servoId = 'servo2'; break;
-        case CMD_SERVO3: servoId = 'servo3'; break;
-        case CMD_SERVO4: servoId = 'servo4'; break;
-      }
-      
-      if (servoId) {
-        var position = document.getElementById(servoId + 'Value').getAttribute('data-value');
-        if(ws != null && ws.readyState == 1) {
-          ws.send(servoCmd + ":" + position + "\r\n");
-        }
-      }
-    }
-
-    function setMin(servoId) {
-      updateServoDisplay(servoId, 0);
-      var cmdId;
-      switch(servoId) {
-        case 'servo1': cmdId = CMD_SERVO1; break;
-        case 'servo2': cmdId = CMD_SERVO2; break;
-        case 'servo3': cmdId = CMD_SERVO3; break;
-        case 'servo4': cmdId = CMD_SERVO4; break;
-      }
-      if(ws != null && ws.readyState == 1 && cmdId) {
-        ws.send(cmdId + ":0\r\n");
-      }
-    }
-
-    function setMid(servoId) {
-      updateServoDisplay(servoId, 90);
-      var cmdId;
-      switch(servoId) {
-        case 'servo1': cmdId = CMD_SERVO1; break;
-        case 'servo2': cmdId = CMD_SERVO2; break;
-        case 'servo3': cmdId = CMD_SERVO3; break;
-        case 'servo4': cmdId = CMD_SERVO4; break;
-      }
-      if(ws != null && ws.readyState == 1 && cmdId) {
-        ws.send(cmdId + ":90\r\n");
-      }
-    }
-
-    function setMax(servoId) {
-      updateServoDisplay(servoId, 180);
-      var cmdId;
-      switch(servoId) {
-        case 'servo1': cmdId = CMD_SERVO1; break;
-        case 'servo2': cmdId = CMD_SERVO2; break;
-        case 'servo3': cmdId = CMD_SERVO3; break;
-        case 'servo4': cmdId = CMD_SERVO4; break;
-      }
-      if(ws != null && ws.readyState == 1 && cmdId) {
-        ws.send(cmdId + ":180\r\n");
-      }
-    }
-    
-    window.onload = init;
-    </script>
+        <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+        <title>ESP32 RC Car Control</title>
+        <style>
+            body {
+                font-family: Arial, sans-serif;
+                text-align: center;
+                margin: 0;
+                padding: 0;
+                max-width: 800px;
+                background-color: #222;
+                color: #fff;
+                min-height: 100vh;
+                position: relative;
+                overflow-y: auto;
+                -webkit-overflow-scrolling: touch; /* Enables smooth scrolling on iOS */
+            }
+            .container {
+                display: flex;
+                flex-direction: column;
+                padding-bottom: 60px; /* Space for footer */
+            }
+            .control-area {
+                flex: 1;
+                display: flex;
+                flex-direction: column;
+                justify-content: space-between;
+                padding: 10px;
+            }
+            .button-container {
+                display: grid;
+                grid-template-columns: repeat(3, 1fr);
+                grid-template-rows: repeat(3, 1fr);
+                gap: 10px;
+                margin-bottom: 20px;
+            }
+            .servo-controls, .speed-control {
+                margin-top: 20px;
+            }
+            .control-button {
+                height: 70px;
+                font-size: 24px;
+                background-color: #444;
+                color: white;
+                border: none;
+                border-radius: 10px;
+                cursor: pointer;
+                user-select: none;
+                -webkit-user-select: none;
+                -webkit-touch-callout: none;
+            }
+            .control-button:active {
+                background-color: #666;
+            }
+            .center-button {
+                background-color: #f44336;
+            }
+            .direction-button {
+                background-color: #2196F3;
+            }
+            .empty {
+                visibility: hidden;
+            }
+            .slider-container {
+                width: 100%;
+                margin: 20px 0;
+                padding: 10px 0;
+            }
+            .slider {
+                width: 100%;
+                height: 40px;
+                margin: 10px 0;
+                -webkit-appearance: none;
+                appearance: none;
+                background: #444;
+                outline: none;
+                border-radius: 20px;
+            }
+            .slider::-webkit-slider-thumb {
+                -webkit-appearance: none;
+                appearance: none;
+                width: 50px;
+                height: 50px;
+                border-radius: 50%;
+                background: #2196F3;
+                cursor: pointer;
+            }
+            .slider::-moz-range-thumb {
+                width: 50px;
+                height: 50px;
+                border-radius: 50%;
+                background: #2196F3;
+                cursor: pointer;
+            }
+            .servo-value {
+                font-size: 20px;
+                font-weight: bold;
+                margin: 5px 0;
+                display: inline-block;
+                width: 50px;
+            }
+            .footer {
+                padding: 10px;
+                background-color: #333;
+                font-size: 12px;
+                position: relative;
+                width: 100%;
+                bottom: 0;
+            }
+            /* Speed toggle switch */
+            .switch {
+                position: relative;
+                display: inline-block;
+                width: 60px;
+                height: 34px;
+                margin: 10px;
+            }
+            .switch input { 
+                opacity: 0;
+                width: 0;
+                height: 0;
+            }
+            .slider-switch {
+                position: absolute;
+                cursor: pointer;
+                top: 0;
+                left: 0;
+                right: 0;
+                bottom: 0;
+                background-color: #ccc;
+                transition: .4s;
+                border-radius: 34px;
+            }
+            .slider-switch:before {
+                position: absolute;
+                content: "";
+                height: 26px;
+                width: 26px;
+                left: 4px;
+                bottom: 4px;
+                background-color: white;
+                transition: .4s;
+                border-radius: 50%;
+            }
+            input:checked + .slider-switch {
+                background-color: #2196F3;
+            }
+            input:focus + .slider-switch {
+                box-shadow: 0 0 1px #2196F3;
+            }
+            input:checked + .slider-switch:before {
+                transform: translateX(26px);
+            }
+        </style>
     </head>
     <body>
-    <h2>ESP32 - RC Car via Web</h2>
-    <div id="container">
-      <div id="0" class="button_stop">STOP</div>
-      <div id="1" class="button_up">FORWARD</div>
-      <div id="2" class="button_down">BACKWARD</div>
-      <div id="8" class="button_right">RIGHT</div>
-      <div id="4" class="button_left">LEFT</div>
-    </div>
+        <div class="container">
+            <div class="control-area">
+                <h2>ESP32 RC Car Control</h2>
+                
+                <!-- Movement Controls -->
+                <div class="button-container">
+                    <button class="control-button empty"></button>
+                    <button class="control-button direction-button" id="forward" ontouchstart="sendCommand(1); return false;" ontouchend="sendCommand(0); return false;" onmousedown="sendCommand(1)" onmouseup="sendCommand(0)">Forward</button>
+                    <button class="control-button empty"></button>
+                    
+                    <button class="control-button direction-button" id="left" ontouchstart="sendCommand(4); return false;" ontouchend="sendCommand(0); return false;" onmousedown="sendCommand(4)" onmouseup="sendCommand(0)">Left</button>
+                    <button class="control-button center-button" id="stop" onclick="sendCommand(0)">Stop</button>
+                    <button class="control-button direction-button" id="right" ontouchstart="sendCommand(8); return false;" ontouchend="sendCommand(0); return false;" onmousedown="sendCommand(8)" onmouseup="sendCommand(0)">Right</button>
+                    
+                    <button class="control-button empty"></button>
+                    <button class="control-button direction-button" id="backward" ontouchstart="sendCommand(2); return false;" ontouchend="sendCommand(0); return false;" onmousedown="sendCommand(2)" onmouseup="sendCommand(0)">Backward</button>
+                    <button class="control-button empty"></button>
+                </div>
     
-    <div class="servo-controls">
-      <h3>Servo Controls</h3>
-      
-      <div class="slider-container">
-        <label for="servo1">Servo 1 (Pin 13):</label>
-        <div class="servo-value" id="servo1Value">90°</div>
-        <div class="slider-actions">
-          <button id="servo1Decrease" class="decrease">◄</button>
-          <button class="action" onclick="setMin('servo1')">Min</button>
-          <button class="action" onclick="setMid('servo1')">Mid</button>
-          <button class="action" onclick="setMax('servo1')">Max</button>
-          <button id="servo1Increase">►</button>
+                <!-- Speed Control -->
+                <div class="speed-control">
+                    <h3>Motor Speed</h3>
+                    <label class="switch">
+                        <input type="checkbox" id="speedToggle" onchange="toggleSpeed()">
+                        <span class="slider-switch"></span>
+                    </label>
+                    <span id="speedLabel">Normal Speed</span>
+                </div>
+                
+                <!-- Servo Controls -->
+                <div class="servo-controls">
+                    <h3>Servo Controls</h3>
+                    <div class="slider-container">
+                        <span>Servo 1</span>
+                        <input type="range" min="0" max="180" value="90" class="slider" id="servo1" oninput="updateServo(1, this.value)">
+                        <span id="servo1Value" class="servo-value">90°</span>
+                    </div>
+                    <div class="slider-container">
+                        <span>Servo 2</span>
+                        <input type="range" min="0" max="180" value="90" class="slider" id="servo2" oninput="updateServo(2, this.value)">
+                        <span id="servo2Value" class="servo-value">90°</span>
+                    </div>
+                    <div class="slider-container">
+                        <span>Servo 3</span>
+                        <input type="range" min="0" max="180" value="90" class="slider" id="servo3" oninput="updateServo(3, this.value)">
+                        <span id="servo3Value" class="servo-value">90°</span>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="footer">
+                Made by Tran Minh Thuan
+            </div>
         </div>
-      </div>
-      
-      <div class="slider-container">
-        <label for="servo2">Servo 2 (Pin 12):</label>
-        <div class="servo-value" id="servo2Value">90°</div>
-        <div class="slider-actions">
-          <button id="servo2Decrease" class="decrease">◄</button>
-          <button class="action" onclick="setMin('servo2')">Min</button>
-          <button class="action" onclick="setMid('servo2')">Mid</button>
-          <button class="action" onclick="setMax('servo2')">Max</button>
-          <button id="servo2Increase">►</button>
-        </div>
-      </div>
-      
-      <div class="slider-container">
-        <label for="servo3">Servo 3 (Pin 14):</label>
-        <div class="servo-value" id="servo3Value">90°</div>
-        <div class="slider-actions">
-          <button id="servo3Decrease" class="decrease">◄</button>
-          <button class="action" onclick="setMin('servo3')">Min</button>
-          <button class="action" onclick="setMid('servo3')">Mid</button>
-          <button class="action" onclick="setMax('servo3')">Max</button>
-          <button id="servo3Increase">►</button>
-        </div>
-      </div>
-      
-      <div class="slider-container">
-        <label for="servo4">Servo 4 (Pin 27):</label>
-        <div class="servo-value" id="servo4Value">90°</div>
-        <div class="slider-actions">
-          <button id="servo4Decrease" class="decrease">◄</button>
-          <button class="action" onclick="setMin('servo4')">Min</button>
-          <button class="action" onclick="setMid('servo4')">Mid</button>
-          <button class="action" onclick="setMax('servo4')">Max</button>
-          <button id="servo4Increase">►</button>
-        </div>
-      </div>
-    </div>
-
-    <p>
-    WebSocket : <span id="ws_state" style="color:blue">closed</span><br>
-    </p>
-    <button id="wc_conn" type="button" onclick="wc_onclick();">Connect</button>
-    <br>
-    <br>
-    <div class="sponsor">Sponsored by <a href="https://amazon.com/diyables">DIYables</a></div>
+        
+        <script>
+            var ws;
+            var isHighSpeed = true;
+            var servoValues = {1: 90, 2: 90, 3: 90};
+            var wsConnected = false;
+            var connectionAttempts = 0;
+            var maxConnectionAttempts = 5;
+            
+            // Allow page scrolling in general, only prevent on specific elements
+            document.addEventListener('touchmove', function(e) {
+                // By default, allow scrolling
+            }, { passive: true });
+            
+            function connectWebSocket() {
+                // Use the current hostname and port 81
+                var wsUrl = 'ws://' + window.location.hostname + ':81';
+                
+                // If running on localhost for testing, use the ESP32's IP directly
+                if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
+                    wsUrl = 'ws://192.168.4.1:81';
+                }
+                
+                console.log('Connecting to WebSocket at: ' + wsUrl);
+                document.getElementById('stop').style.backgroundColor = "#999"; // Gray when connecting
+                document.getElementById('stop').innerText = "Connecting...";
+                
+                try {
+                    ws = new WebSocket(wsUrl);
+                    
+                    ws.onopen = function() {
+                        console.log('Connected to WebSocket server');
+                        wsConnected = true;
+                        connectionAttempts = 0;
+                        document.getElementById('stop').style.backgroundColor = "#f44336"; // Red when connected
+                        document.getElementById('stop').innerText = "Stop";
+                        // Send a test message to confirm connection
+                        ws.send("0");
+                    };
+                    
+                    ws.onclose = function() {
+                        console.log('Disconnected from WebSocket server');
+                        wsConnected = false;
+                        document.getElementById('stop').style.backgroundColor = "#999"; // Gray when disconnected
+                        document.getElementById('stop').innerText = "Disconnected";
+                        
+                        // Attempt to reconnect with increasing delays
+                        if (connectionAttempts < maxConnectionAttempts) {
+                            connectionAttempts++;
+                            var reconnectDelay = 1000 * connectionAttempts; // Increase delay with each attempt
+                            console.log('Reconnecting in ' + (reconnectDelay/1000) + ' seconds... (Attempt ' + connectionAttempts + ')');
+                            setTimeout(connectWebSocket, reconnectDelay);
+                        } else {
+                            console.log('Max reconnection attempts reached. Please refresh the page to try again.');
+                            document.getElementById('stop').innerText = "Reload Page";
+                            document.getElementById('stop').onclick = function() {
+                                window.location.reload();
+                            };
+                        }
+                    };
+                    
+                    ws.onerror = function(err) {
+                        console.error('WebSocket error:', err);
+                        wsConnected = false;
+                    };
+                } catch (e) {
+                    console.error('WebSocket creation error:', e);
+                    document.getElementById('stop').innerText = "Conn Failed";
+                    document.getElementById('stop').style.backgroundColor = "#ff9800"; // Orange for error
+                }
+            }
+            
+            function sendCommand(cmd) {
+                console.log('Attempting to send command: ' + cmd);
+                if (ws && ws.readyState === WebSocket.OPEN) {
+                    // Apply speed modifier if low speed is selected
+                    if (!isHighSpeed && (cmd == 1 || cmd == 2 || cmd == 4 || cmd == 8)) {
+                        // Add 100 to normal commands to indicate slow movement
+                        cmd += 100;
+                    }
+                    ws.send(cmd.toString());
+                    console.log('Command sent: ' + cmd);
+                    return true;
+                } else {
+                    console.log('WebSocket not connected, trying to connect...');
+                    document.getElementById('stop').innerText = "Connecting...";
+                    connectWebSocket();
+                    return false;
+                }
+            }
+            
+            // Setup button event listeners properly after DOM is loaded
+            document.addEventListener('DOMContentLoaded', function() {
+                // Add touch/click event listeners to direction buttons
+                var buttons = document.querySelectorAll('.direction-button');
+                buttons.forEach(function(button) {
+                    button.addEventListener('touchstart', function(e) {
+                        e.preventDefault(); // Prevent default behavior
+                        var id = button.id;
+                        switch(id) {
+                            case 'forward': sendCommand(1); break;
+                            case 'backward': sendCommand(2); break;
+                            case 'left': sendCommand(4); break;
+                            case 'right': sendCommand(8); break;
+                        }
+                    });
+                    
+                    button.addEventListener('touchend', function(e) {
+                        e.preventDefault(); // Prevent default behavior
+                        sendCommand(0); // Stop on touch end
+                    });
+                });
+                
+                // Add click event to stop button
+                document.getElementById('stop').addEventListener('click', function(e) {
+                    e.preventDefault();
+                    sendCommand(0);
+                });
+            });
+            
+            function updateServo(servoNum, position) {
+                // Update display
+                document.getElementById('servo' + servoNum + 'Value').innerText = position + '°';
+                
+                // Store current position
+                servoValues[servoNum] = position;
+                
+                // Send command if connected
+                if (ws && ws.readyState === WebSocket.OPEN) {
+                    // Convert servo number to command
+                    var cmd = 0;
+                    switch(servoNum) {
+                        case 1: cmd = 16; break;  // CMD_SERVO1
+                        case 2: cmd = 32; break;  // CMD_SERVO2
+                        case 3: cmd = 64; break;  // CMD_SERVO3
+                    }
+                    
+                    var message = cmd + ':' + position;
+                    ws.send(message);
+                    console.log('Servo command sent: ' + message);
+                } else {
+                    console.log('WebSocket not connected for servo command');
+                    connectWebSocket();
+                }
+            }
+            
+            function toggleSpeed() {
+                isHighSpeed = !document.getElementById('speedToggle').checked;
+                document.getElementById('speedLabel').innerText = isHighSpeed ? 'Normal Speed' : 'Slow Speed';
+            }
+            
+            // Connect when the page loads
+            window.onload = function() {
+                console.log('Page loaded, connecting WebSocket...');
+                // Add status display to debugging
+                document.body.insertAdjacentHTML('afterbegin', 
+                    '<div id="debug" style="position:fixed; top:0; right:0; background:rgba(0,0,0,0.7); color:white; padding:5px; font-size:12px; z-index:1000;">Connecting...</div>');
+                
+                // Start WebSocket connection
+                connectWebSocket();
+                
+                // Update debug info
+                setInterval(function() {
+                    var debugElem = document.getElementById('debug');
+                    if (debugElem) {
+                        var status = wsConnected ? 'Connected' : 'Disconnected';
+                        var readyState = ws ? ['Connecting', 'Open', 'Closing', 'Closed'][ws.readyState] : 'Unknown';
+                        debugElem.innerHTML = 'WebSocket: ' + status + '<br>State: ' + readyState;
+                    }
+                }, 1000);
+                
+                // Add preventScroll function to sliders
+                document.querySelectorAll('.slider').forEach(function(slider) {
+                    slider.addEventListener('touchmove', function(e) {
+                        e.stopPropagation();
+                    }, { passive: false });
+                });
+            };
+        </script>
     </body>
     </html>
-    )=====";
+    )rawliteral";

@@ -10,17 +10,26 @@
 #define CMD_LEFT 4
 #define CMD_RIGHT 8
 
+// Add slow movement commands
+#define CMD_SLOW_FORWARD 101
+#define CMD_SLOW_BACKWARD 102
+#define CMD_SLOW_LEFT 104
+#define CMD_SLOW_RIGHT 108
+
 // Servo commands
 #define CMD_SERVO1 16
 #define CMD_SERVO2 32
 #define CMD_SERVO3 64
-<<<<<<< HEAD
-#define ENA_PIN 16  // Motor driver ENA pin
-#define IN1_PIN 17  // Motor driver IN1 pin
-#define IN2_PIN 5   // Motor driver IN2 pin
-#define IN3_PIN 18  // Motor driver IN3 pin
-#define IN4_PIN 19  // Motor driver IN4 pin
-#define ENB_PIN 21  // Motor driver ENB pin
+
+// Motor pin definitions - corrected to match standard L298N wiring
+// Right motor
+#define ENA_PIN 18  // Enable pin for right motor
+#define IN1_PIN 19  // Control pin 1 for right motor
+#define IN2_PIN 21  // Control pin 2 for right motor
+// Left motor
+#define ENB_PIN 15   // Enable pin for left motor - using pin 5 which supports PWM
+#define IN3_PIN 4  // Control pin 1 for left motor - changed to 15 (supports output)
+#define IN4_PIN 2   // Control pin 2 for left motor - changed to 2 (supports output)
 
 // LED indicator pin
 #define LED_PIN T2  // Using T2 pin for connection status LED
@@ -29,38 +38,34 @@
 bool clientConnected = false;
 unsigned long lastBlinkTime = 0;
 bool ledState = false;
-=======
-#define CMD_SERVO4 128
-
-#define ENA_PIN 15  // The ESP32 pin GPIO14 connected to the ENA pin L298N
-#define IN1_PIN 2   // The ESP32 pin GPIO27 connected to the IN1 pin L298N
-#define IN2_PIN 4   // The ESP32 pin GPIO26 connected to the IN2 pin L298N
-#define IN3_PIN 16  // The ESP32 pin GPIO25 connected to the IN3 pin L298N
-#define IN4_PIN 17  // The ESP32 pin GPIO33 connected to the IN4 pin L298N
-#define ENB_PIN 5   // The ESP32 pin GPIO32 connected to the ENB pin L298N
->>>>>>> parent of 08cad5e (Enhance RC car control with slow movement commands and improved web interface styling)
 
 // Servo pins - modified to avoid conflict with motor pins
-#define SERVO1_PIN 13
-#define SERVO2_PIN 12
-#define SERVO3_PIN 14
-#define SERVO4_PIN 27
+#define SERVO1_PIN 27
+#define SERVO2_PIN 26
+#define SERVO3_PIN 33
+
+// Motor speeds
+#define MOTOR_BASE_SPEED 250
+#define MOTOR_SLOW_SPEED 160
 
 // Create servo objects
 Servo servo1;
 Servo servo2;
 Servo servo3;
-Servo servo4;
 
 // Servo positions (0-180)
 int servo1Pos = 90;
 int servo2Pos = 90;
-int servo3Pos = 90;
-int servo4Pos = 90;
+int servo3Pos = 50;
+
+// Last servo positions to track changes
+int lastServo1Pos = 90;
+int lastServo2Pos = 90;
+int lastServo3Pos = 50;
 
 // Access point credentials
-const char* ap_ssid = "ESP32_RC_Car";     // Name of the access point
-const char* ap_password = "12345678";     // Password for the access point (min 8 chars)
+const char* ap_ssid = "Mat ngu trien mien";     // Name of the access point
+const char* ap_password = "monggiadinhanlanh";     // Password for the access point (min 8 chars)
 
 // IP configurations for AP mode
 IPAddress ap_local_IP(192, 168, 4, 1);
@@ -101,30 +106,19 @@ void webSocketEvent(uint8_t num, WStype_t type, uint8_t* payload, size_t length)
           // Process servo commands
           switch (cmd) {
             case CMD_SERVO1:
-              if (pos != servo1Pos) { // Only update if position changed
-                servo1Pos = pos;
-                servo1.write(servo1Pos);
-                Serial.printf("Setting Servo 1 to %d degrees\n", servo1Pos);
-              }
+              servo1Pos = pos;
+              servo1.write(servo1Pos);
+              Serial.printf("Setting Servo 1 to %d degrees\n", servo1Pos);
               break;
             case CMD_SERVO2:
-              if (pos != servo2Pos) { // Only update if position changed
-                servo2Pos = pos;
-                servo2.write(servo2Pos);
-                Serial.printf("Setting Servo 2 to %d degrees\n", servo2Pos);
-              }
+              servo2Pos = pos;
+              servo2.write(servo2Pos);
+              Serial.printf("Setting Servo 2 to %d degrees\n", servo2Pos);
               break;
             case CMD_SERVO3:
-              if (pos != servo3Pos) { // Only update if position changed
-                servo3Pos = pos;
-                servo3.write(servo3Pos);
-                Serial.printf("Setting Servo 3 to %d degrees\n", servo3Pos);
-              }
-              break;
-            case CMD_SERVO4:
-              servo4Pos = pos;
-              servo4.write(servo4Pos);
-              Serial.printf("Setting Servo 4 to %d degrees\n", servo4Pos);
+              servo3Pos = pos;
+              servo3.write(servo3Pos);
+              Serial.printf("Setting Servo 3 to %d degrees\n", servo3Pos);
               break;
           }
         } 
@@ -155,6 +149,22 @@ void webSocketEvent(uint8_t num, WStype_t type, uint8_t* payload, size_t length)
               Serial.println("Turn Right");
               CAR_turnRight();
               break;
+            case CMD_SLOW_FORWARD:
+              Serial.println("Move Forward Slowly");
+              CAR_moveForwardSlow();
+              break;
+            case CMD_SLOW_BACKWARD:
+              Serial.println("Move Backward Slowly");
+              CAR_moveBackwardSlow();
+              break;
+            case CMD_SLOW_LEFT:
+              Serial.println("Turn Left Slowly");
+              CAR_turnLeftSlow();
+              break;
+            case CMD_SLOW_RIGHT:
+              Serial.println("Turn Right Slowly");
+              CAR_turnRightSlow();
+              break;
             default:
               Serial.println("Unknown command");
           }
@@ -180,8 +190,14 @@ void setup() {
   pinMode(ENB_PIN, OUTPUT);
   pinMode(IN3_PIN, OUTPUT);
   pinMode(IN4_PIN, OUTPUT);
-  digitalWrite(ENA_PIN, MOTOR_BASE_SPEED);  // set full speed
-  digitalWrite(ENB_PIN, MOTOR_BASE_SPEED);  // set full speed
+  
+  // Initialize motor pins to LOW
+  digitalWrite(IN1_PIN, LOW);
+  digitalWrite(IN2_PIN, LOW);
+  digitalWrite(IN3_PIN, LOW);
+  digitalWrite(IN4_PIN, LOW);
+  digitalWrite(ENA_PIN, LOW);
+  digitalWrite(ENB_PIN, LOW);
 
   // Initialize ESP32 Servo library
   ESP32PWM::allocateTimer(0);
@@ -202,10 +218,6 @@ void setup() {
   servo3.attach(SERVO3_PIN, 544, 2400);
   servo3.write(servo3Pos);
   
-  servo4.setPeriodHertz(50);
-  servo4.attach(SERVO4_PIN, 500, 2400);
-  servo4.write(servo4Pos);
-  
   Serial.println("Servos initialized");
 
   // Set WiFi to AP mode only
@@ -217,13 +229,14 @@ void setup() {
   // Initialize WebSocket server
   webSocket.begin();
   webSocket.onEvent(webSocketEvent);
+  Serial.println("WebSocket server started on port 81");
 
   // Set up web server routes
   server.on("/", HTTP_GET, handleRoot);
   
   // Start server
   server.begin();
-  Serial.println("HTTP server started");
+  Serial.println("HTTP server started on port 80");
 
   // Configure LED pin
   pinMode(LED_PIN, OUTPUT);
@@ -265,6 +278,15 @@ void loop() {
       lastBlinkTime = currentTime;
       ledState = !ledState;
       digitalWrite(LED_PIN, ledState);
+      
+      // Print periodic debug info
+      if (ledState) {
+        Serial.println("Waiting for WebSocket connection...");
+        Serial.print("Access point IP: ");
+        Serial.println(WiFi.softAPIP());
+        Serial.print("Connected clients: ");
+        Serial.println(WiFi.softAPgetStationNum());
+      }
     }
   } else {
     // Keep LED on when client is connected
@@ -273,120 +295,168 @@ void loop() {
 }
 
 void CAR_moveForward() {
-  digitalWrite(IN1_PIN, HIGH);
+  // First set direction pins
+  digitalWrite(IN1_PIN, HIGH);  // Right motor forward
   digitalWrite(IN2_PIN, LOW);
-  digitalWrite(IN3_PIN, HIGH);
+  digitalWrite(IN3_PIN, HIGH);  // Left motor forward
   digitalWrite(IN4_PIN, LOW);
+  
+  // Then set speed
+  analogWrite(ENA_PIN, MOTOR_BASE_SPEED);  // Right motor speed
+  analogWrite(ENB_PIN, MOTOR_BASE_SPEED);  // Left motor speed
+  
+  Serial.println("Moving forward: Right(IN1 HIGH), Left(IN3 HIGH)");
+  
+  // Debug motor signals
+  Serial.print("Motor pins - IN1: ");
+  Serial.print(digitalRead(IN1_PIN));
+  Serial.print(", IN2: ");
+  Serial.print(digitalRead(IN2_PIN));
+  Serial.print(", IN3: ");
+  Serial.print(digitalRead(IN3_PIN));
+  Serial.print(", IN4: ");
+  Serial.println(digitalRead(IN4_PIN));
 }
 
 void CAR_moveBackward() {
-  digitalWrite(IN1_PIN, LOW);
+  // First set direction pins
+  digitalWrite(IN1_PIN, LOW);   // Right motor backward
   digitalWrite(IN2_PIN, HIGH);
-  digitalWrite(IN3_PIN, LOW);
+  digitalWrite(IN3_PIN, LOW);   // Left motor backward
   digitalWrite(IN4_PIN, HIGH);
+  
+  // Then set speed
+  analogWrite(ENA_PIN, MOTOR_BASE_SPEED);  // Right motor speed
+  analogWrite(ENB_PIN, MOTOR_BASE_SPEED);  // Left motor speed
+  
+  Serial.println("Moving backward: Right(IN2 HIGH), Left(IN4 HIGH)");
+  
+  // Debug motor signals
+  Serial.print("Motor pins - IN1: ");
+  Serial.print(digitalRead(IN1_PIN));
+  Serial.print(", IN2: ");
+  Serial.print(digitalRead(IN2_PIN));
+  Serial.print(", IN3: ");
+  Serial.print(digitalRead(IN3_PIN));
+  Serial.print(", IN4: ");
+  Serial.println(digitalRead(IN4_PIN));
 }
 
 void CAR_turnLeft() {
-  digitalWrite(IN1_PIN, HIGH);
+  // First set direction pins
+  digitalWrite(IN1_PIN, HIGH);  // Right motor forward
   digitalWrite(IN2_PIN, LOW);
-  digitalWrite(IN3_PIN, LOW);
-  digitalWrite(IN4_PIN, LOW);
+  digitalWrite(IN3_PIN, LOW);   // Left motor backward
+  digitalWrite(IN4_PIN, HIGH);
+  
+  // Then set speed
+  analogWrite(ENA_PIN, MOTOR_BASE_SPEED);  // Right motor speed
+  analogWrite(ENB_PIN, MOTOR_BASE_SPEED);  // Left motor speed
+  
+  Serial.println("Turning left: Right forward, Left backward");
+  
+  // Debug motor signals
+  Serial.print("Motor pins - IN1: ");
+  Serial.print(digitalRead(IN1_PIN));
+  Serial.print(", IN2: ");
+  Serial.print(digitalRead(IN2_PIN));
+  Serial.print(", IN3: ");
+  Serial.print(digitalRead(IN3_PIN));
+  Serial.print(", IN4: ");
+  Serial.println(digitalRead(IN4_PIN));
 }
 
 void CAR_turnRight() {
-  digitalWrite(IN1_PIN, LOW);
-  digitalWrite(IN2_PIN, LOW);
-  digitalWrite(IN3_PIN, HIGH);
+  // First set direction pins
+  digitalWrite(IN1_PIN, LOW);   // Right motor backward
+  digitalWrite(IN2_PIN, HIGH);
+  digitalWrite(IN3_PIN, HIGH);  // Left motor forward
   digitalWrite(IN4_PIN, LOW);
+  
+  // Then set speed
+  analogWrite(ENA_PIN, MOTOR_BASE_SPEED);  // Right motor speed
+  analogWrite(ENB_PIN, MOTOR_BASE_SPEED);  // Left motor speed
+  
+  Serial.println("Turning right: Right backward, Left forward");
+  
+  // Debug motor signals
+  Serial.print("Motor pins - IN1: ");
+  Serial.print(digitalRead(IN1_PIN));
+  Serial.print(", IN2: ");
+  Serial.print(digitalRead(IN2_PIN));
+  Serial.print(", IN3: ");
+  Serial.print(digitalRead(IN3_PIN));
+  Serial.print(", IN4: ");
+  Serial.println(digitalRead(IN4_PIN));
 }
 
 void CAR_stop() {
-  // First set the direction pins to LOW
+  // First set direction pins to LOW
   digitalWrite(IN1_PIN, LOW);
   digitalWrite(IN2_PIN, LOW);
   digitalWrite(IN3_PIN, LOW);
   digitalWrite(IN4_PIN, LOW);
   
-  // Then reduce the speed to 0 to prevent any residual current
-  analogWrite(ENA_PIN, 0);
-  analogWrite(ENB_PIN, 0);
+  // Then set speed to 0
+  analogWrite(ENA_PIN, 0);  // Right motor speed
+  analogWrite(ENB_PIN, 0);  // Left motor speed
+  
+  Serial.println("Stopping: All direction pins LOW");
 }
 
-<<<<<<< HEAD
 // New slow movement functions
 void CAR_moveForwardSlow() {
-  // First set speed to avoid current spikes
-  analogWrite(ENA_PIN, MOTOR_SLOW_SPEED);
-  analogWrite(ENB_PIN, MOTOR_SLOW_SPEED);
-  
-  // Small delay to allow PWM to stabilize
-  delay(5);
-  
-  // Then set direction
-  digitalWrite(IN1_PIN, HIGH);
+  // First set direction pins
+  digitalWrite(IN1_PIN, HIGH);  // Right motor forward
   digitalWrite(IN2_PIN, LOW);
-  digitalWrite(IN3_PIN, HIGH);
+  digitalWrite(IN3_PIN, HIGH);  // Left motor forward
   digitalWrite(IN4_PIN, LOW);
+  
+  // Then set speed
+  analogWrite(ENA_PIN, MOTOR_SLOW_SPEED);  // Right motor speed
+  analogWrite(ENB_PIN, MOTOR_SLOW_SPEED);  // Left motor speed
+  
+  Serial.println("Moving forward slowly");
 }
 
 void CAR_moveBackwardSlow() {
-  // First set speed to avoid current spikes
-  analogWrite(ENA_PIN, MOTOR_SLOW_SPEED);
-  analogWrite(ENB_PIN, MOTOR_SLOW_SPEED);
-  
-  // Small delay to allow PWM to stabilize
-  delay(5);
-  
-  // Then set direction
-  digitalWrite(IN1_PIN, LOW);
+  // First set direction pins
+  digitalWrite(IN1_PIN, LOW);   // Right motor backward
   digitalWrite(IN2_PIN, HIGH);
-  digitalWrite(IN3_PIN, LOW);
+  digitalWrite(IN3_PIN, LOW);   // Left motor backward
   digitalWrite(IN4_PIN, HIGH);
+  
+  // Then set speed
+  analogWrite(ENA_PIN, MOTOR_SLOW_SPEED);  // Right motor speed
+  analogWrite(ENB_PIN, MOTOR_SLOW_SPEED);  // Left motor speed
+  
+  Serial.println("Moving backward slowly");
 }
 
 void CAR_turnLeftSlow() {
-  // First set speed to avoid current spikes
-  analogWrite(ENA_PIN, MOTOR_SLOW_SPEED);
-  analogWrite(ENB_PIN, MOTOR_SLOW_SPEED);
-  
-  // Small delay to allow PWM to stabilize
-  delay(5);
-  
-  // Then set direction - only activate necessary motors
-  digitalWrite(IN1_PIN, HIGH);
+  // First set direction pins
+  digitalWrite(IN1_PIN, HIGH);  // Right motor forward
   digitalWrite(IN2_PIN, LOW);
-  digitalWrite(IN3_PIN, LOW);
-  digitalWrite(IN4_PIN, LOW);
+  digitalWrite(IN3_PIN, LOW);   // Left motor backward
+  digitalWrite(IN4_PIN, HIGH);
+  
+  // Then set speed
+  analogWrite(ENA_PIN, MOTOR_SLOW_SPEED);  // Right motor speed
+  analogWrite(ENB_PIN, MOTOR_SLOW_SPEED);  // Left motor speed
+  
+  Serial.println("Turning left slowly");
 }
 
 void CAR_turnRightSlow() {
-  // First set speed to avoid current spikes
-  analogWrite(ENA_PIN, MOTOR_SLOW_SPEED);
-  analogWrite(ENB_PIN, MOTOR_SLOW_SPEED);
-  
-  // Small delay to allow PWM to stabilize
-  delay(5);
-  
-  // Then set direction - only activate necessary motors
-  digitalWrite(IN1_PIN, LOW);
-  digitalWrite(IN2_PIN, LOW);
-  digitalWrite(IN3_PIN, HIGH);
+  // First set direction pins
+  digitalWrite(IN1_PIN, LOW);   // Right motor backward
+  digitalWrite(IN2_PIN, HIGH);
+  digitalWrite(IN3_PIN, HIGH);  // Left motor forward
   digitalWrite(IN4_PIN, LOW);
+  
+  // Then set speed
+  analogWrite(ENA_PIN, MOTOR_SLOW_SPEED);  // Right motor speed
+  analogWrite(ENB_PIN, MOTOR_SLOW_SPEED);  // Left motor speed
+  
+  Serial.println("Turning right slowly");
 }
-=======
-void moveServo1() {
-  servo1.write(servo1Pos);
-}
-
-void moveServo2() {
-  servo2.write(servo2Pos);
-}
-
-void moveServo3() {
-  servo3.write(servo3Pos);
-}
-
-void moveServo4() {
-  servo4.write(servo4Pos);
-}
->>>>>>> parent of 08cad5e (Enhance RC car control with slow movement commands and improved web interface styling)
