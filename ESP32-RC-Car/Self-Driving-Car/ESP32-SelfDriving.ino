@@ -13,38 +13,23 @@
 #define IN3 16  // Left motors direction 1
 #define IN4 17  // Left motors direction 2
 
-// Pin definitions for line sensors (using digital reading with pull-up resistors)
-#define SENSOR_1 26  // Leftmost sensor
-#define SENSOR_2 25
-#define SENSOR_3 33  // Middle sensor
-#define SENSOR_4 32
-#define SENSOR_5 35  // Rightmost sensor
-
-// Pin definitions for HC-SR04 sonar sensor
-#define TRIGGER_PIN 14
-#define ECHO_PIN 27
-
-// Define onboard LED pin
-#define LED_PIN T2
-
-// Define button pin for color mode toggle
-#define TOGGLE_BTN 13  // Choose an available pin
-
-// PID control constants - adjust these based on testing
-float Kp = 0.38;      // Proportional gain
-float Ki = 0.03;     // Integral gain
-float Kd = 0.1;      // Derivative gain
-
-// PID variables
-float previousError = 0;
-float integral = 0;
-unsigned long previousTime = 0;
+// Pin definitions for line sensors (digital sensors)
+#define LEFT_MOST 13  // Leftmost sensor
+#define LEFT_INNER 12 // Left inner sensor
+#define RIGHT_INNER 14 // Right inner sensor
+#define RIGHT_MOST 27 // Rightmost sensor
+#define STAIR_SENSOR 26 // New stair detection sensor
 
 // Motor speed variables
 int baseSpeed = 255;  // Base speed for motors, range 0-255
-int turnSpeed = 170;   // Regular speed for inner wheel in slight turns (changed from negative value)
-int hardTurnSpeed = -240; // Reversed speed for inner wheel in hard turns
-int reducedTurnSpeed = 160; // Speed for the reduced speed side during turns
+int turnSpeed = 190;   // Regular speed for inner wheel in slight turns (changed from negative value)
+int hardTurnSpeed = 80; // Reversed speed for inner wheel in hard turns
+int reducedTurnSpeed = 150; // Speed for the reduced speed side during turns
+
+// Stair detection variables
+unsigned long stairDetectedTime = 0;
+unsigned long stairTimeoutDuration = 20000; // 20 seconds default timeout
+bool stairDetected = false;
 
 // Remove wheel locking control variables
 #define DEBUG_MODE true
@@ -86,79 +71,23 @@ void setup() {
     pinMode(IN3, OUTPUT);
     pinMode(IN4, OUTPUT);
     
-    // Configure ESP32 PWM for motor control using the new API (ESP32 v3.x)
-    ledcAttach(ENA, freq, resolution);
-    ledcAttach(ENB, freq, resolution);
+    // Configure ESP32 PWM for motor control using newer ledcAttach function
+    // This automatically selects appropriate channels
+    ledcAttach(ENA, freq, resolution);  // Automatically assigns a channel for ENA
+    ledcAttach(ENB, freq, resolution);  // Automatically assigns a channel for ENB
     
-    // Initialize line sensor pins with pull-up resistors
-    pinMode(SENSOR_1, INPUT_PULLUP);
-    pinMode(SENSOR_2, INPUT_PULLUP);
-    pinMode(SENSOR_3, INPUT_PULLUP);
-    pinMode(SENSOR_4, INPUT_PULLUP);
-    pinMode(SENSOR_5, INPUT_PULLUP);
+    // Initialize line sensor pins
+    pinMode(LEFT_MOST, INPUT);
+    pinMode(LEFT_INNER, INPUT);
+    pinMode(RIGHT_INNER, INPUT);
+    pinMode(RIGHT_MOST, INPUT);
+    pinMode(STAIR_SENSOR, INPUT); // Initialize stair sensor pin
     
-    // Initialize sonar sensor pins
-    pinMode(TRIGGER_PIN, OUTPUT);
-    pinMode(ECHO_PIN, INPUT);
-    
-    // Initialize button pin for color mode toggle
-    pinMode(TOGGLE_BTN, INPUT_PULLUP);
-    
-    // Check toggle button during startup to set line tracking mode
-    if (digitalRead(TOGGLE_BTN) == LOW) {
-        // Button pressed during startup - toggle line following mode
-        followBlackLine = !followBlackLine;
-        
-        // Indicate which mode is active with LED blinks
-        for (int i = 0; i < 3; i++) {
-            digitalWrite(LED_PIN, LOW);  // LED on
-            delay(200);
-            digitalWrite(LED_PIN, HIGH); // LED off
-            delay(200);
-        }
-        
-        Serial.print("Line tracking mode set to follow ");
-        Serial.println(followBlackLine ? "BLACK line" : "WHITE line");
-        
-        // Wait for button release
-        while (digitalRead(TOGGLE_BTN) == LOW) {
-            delay(10);
-        }
-        delay(500); // Debounce
-    }
-    
-    Serial.println("Ready to drive!");
-    delay(1000); // Short delay before starting
-}
-
-// Function to calculate motor speeds based on correction
-void calculateMotorSpeeds(float correction, int *leftSpeed, int *rightSpeed) {
-    // Base speed for both motors
-    int leftBase = baseSpeed;
-    int rightBase = baseSpeed;
-    
-    // Calculate turn ratio (0.0 to 1.0) based on correction
-    // Normalize the correction value (typical range -100 to 100)
-    float maxCorrection = 100.0;
-    float turnRatio = constrain(abs(correction) / maxCorrection, 0.0, 1.0);
-    
-    // Apply non-linear scaling for more responsive turns
-    // Square the turnRatio for more aggressive turning at high corrections
-    float scaledTurnRatio = turnRatio * turnRatio;
-    
-    // Calculate minimum speed for the slower motor (for sharp turns)
-    int minSpeed = baseSpeed * 0.2; // 20% of base speed for the slower wheel
-    
-    if (correction > 0) {
-        // Need to turn right
-        *leftSpeed = leftBase;
-        // Scale right motor speed down based on correction
-        *rightSpeed = rightBase - (rightBase - minSpeed) * scaledTurnRatio;
-    } else {
-        // Need to turn left
-        *rightSpeed = rightBase;
-        // Scale left motor speed down based on correction
-        *leftSpeed = leftBase - (leftBase - minSpeed) * scaledTurnRatio;
+    // Countdown before starting - without LED flashing
+    Serial.println("Starting in:");
+    for (int i = 3; i > 0; i--) {
+        Serial.println(i);
+        delay(1000);
     }
     
     Serial.println("GO!");
@@ -221,6 +150,7 @@ int readSensors() {
     int leftInner = digitalRead(LEFT_INNER);
     int rightInner = digitalRead(RIGHT_INNER);
     int rightMost = digitalRead(RIGHT_MOST);
+    int stairSensor = digitalRead(STAIR_SENSOR); // Read stair sensor value
     
     if (DEBUG_MODE) {
         Serial.print("Sensors: LM=");
@@ -230,7 +160,24 @@ int readSensors() {
         Serial.print(" RI=");
         Serial.print(rightInner);
         Serial.print(" RM=");
-        Serial.println(rightMost);
+        Serial.print(rightMost);
+        Serial.print(" ST=");
+        Serial.println(stairSensor);
+    }
+
+    // Check for stair detection
+    if (stairSensor == 1) {
+        if (!stairDetected) {
+            stairDetected = true;
+            stairDetectedTime = millis();
+            Serial.println("STAIR DETECTED! Disabling line reading for 20 seconds");
+        }
+        return 0; // Stop immediately when stair detected
+    }
+
+    // If stair detected and timeout not expired, ignore line sensors
+    if (stairDetected && (millis() - stairDetectedTime < stairTimeoutDuration)) {
+        return 0; // Keep stopped during stair detection timeout
     }
 
     // Check for finish line (all sensors reading black)
@@ -256,293 +203,193 @@ int readSensors() {
         if (DEBUG_MODE) {
             Serial.println("All sensors white - continuing last direction");
         }
-    }
-}
-
-// Read line position using digital readings
-float readLinePosition() {
-    int sensorValues[5];
-    
-    // Read sensors with digital values (1 = line detected, 0 = no line)
-    // Pull-up resistors make the reading inverted - LOW means line is detected
-    // We invert the readings based on whether we're following black or white line
-    if (followBlackLine) {
-        // Following black line (black = LOW with pull-up)
-        sensorValues[0] = !digitalRead(SENSOR_1);
-        sensorValues[1] = !digitalRead(SENSOR_2);
-        sensorValues[2] = !digitalRead(SENSOR_3);
-        sensorValues[3] = !digitalRead(SENSOR_4);
-        sensorValues[4] = !digitalRead(SENSOR_5);
-    } else {
-        // Following white line (white = HIGH with pull-up)
-        sensorValues[0] = digitalRead(SENSOR_1);
-        sensorValues[1] = digitalRead(SENSOR_2);
-        sensorValues[2] = digitalRead(SENSOR_3);
-        sensorValues[3] = digitalRead(SENSOR_4);
-        sensorValues[4] = digitalRead(SENSOR_5);
-    }
-    
-    if (DEBUG_MODE) {
-        // Print sensor readings for debugging
-        Serial.print("Sensors: ");
-        for (int i = 0; i < 5; i++) {
-            Serial.print(sensorValues[i]);
-            Serial.print(" ");
-        }
-        Serial.print("| Mode: ");
-        Serial.println(followBlackLine ? "BLACK" : "WHITE");
-    }
-
-    // Check for finish line (all sensors reading the same line)
-    bool allSame = true;
-    for (int i = 1; i < 5; i++) {
-        if (sensorValues[i] != sensorValues[0]) {
-            allSame = false;
-            break;
-        }
-    }
-    
-    // Finish line is when all sensors detect line (all 1s)
-    if (allSame && sensorValues[0] == 1) {
-        // Added debounce to prevent false detections
-        delay(50);
         
-        // Read again to confirm
-        int confirmValues[5];
-        if (followBlackLine) {
-            confirmValues[0] = !digitalRead(SENSOR_1);
-            confirmValues[1] = !digitalRead(SENSOR_2);
-            confirmValues[2] = !digitalRead(SENSOR_3);
-            confirmValues[3] = !digitalRead(SENSOR_4);
-            confirmValues[4] = !digitalRead(SENSOR_5);
+        // Continue turning in the last direction until line is found again
+        if (lastActiveSensor < 0) {
+            return -2; // Continue turning left based on last detection
+        } else if (lastActiveSensor > 0) {
+            return 2; // Continue turning right based on last detection
         } else {
-            confirmValues[0] = digitalRead(SENSOR_1);
-            confirmValues[1] = digitalRead(SENSOR_2);
-            confirmValues[2] = digitalRead(SENSOR_3);
-            confirmValues[3] = digitalRead(SENSOR_4);
-            confirmValues[4] = digitalRead(SENSOR_5);
-        }
-        
-        // Check if still all 1s
-        bool stillAllSame = true;
-        for (int i = 1; i < 5; i++) {
-            if (confirmValues[i] != confirmValues[0] || confirmValues[0] != 1) {
-                stillAllSame = false;
-                break;
-            }
-        }
-        
-        // Only stop if still detecting finish line
-        if (stillAllSame) {
-            stopMotors();  // Stop motors immediately
-            Serial.println("Finish line detected! Stopping.");
-            
-            // Blink LED forever
-            while (1) { 
-                digitalWrite(LED_PIN, LOW);  // LED on (active LOW)
-                delay(500);
-                digitalWrite(LED_PIN, HIGH); // LED off
-                delay(500);
-            }
-            
-            return 999;  // Special value for finish line
+            return 10; // Forward if no previous direction
         }
     }
 
-    // Calculate weighted position using a simpler approach
-    int sum = 0;
-    int weightedSum = 0;
-    int sensorPositions[5] = {0, 1000, 2000, 3000, 4000}; // Position values for each sensor
-
-    for (int i = 0; i < 5; i++) {
-        sum += sensorValues[i];
-        weightedSum += sensorValues[i] * sensorPositions[i];
+    // Handle turn transitions and sensor tracking
+    
+    // Hard left turn initiated by leftmost sensor
+    if (leftMost == 1) {
+        lastActiveSensor = -2;
+        inHardLeftTurn = true;
+        inHardRightTurn = false;
+        turnStartTime = millis();
+        return -2; // Hard left turn
+    }
+    
+    // Hard right turn initiated by rightmost sensor
+    if (rightMost == 1) {
+        lastActiveSensor = 2;
+        inHardRightTurn = true;
+        inHardLeftTurn = false;
+        turnStartTime = millis();
+        return 2; // Hard right turn
     }
 
-    // If no line is detected
-    if (sum == 0) {
-        return previousError;  // Return last known error
+    // Check if we should exit a hard turn when inner sensor detects line
+    if (inHardLeftTurn && leftInner == 1) {
+        // Exit hard left turn if inner left sensor sees the line again
+        // and minimum turn time has passed
+        if (millis() - turnStartTime > MIN_TURN_TIME) {
+            inHardLeftTurn = false;
+            lastActiveSensor = -1;
+            return -1; // Switch to slight left turn
+        } else {
+            return -2; // Continue hard left turn until minimum time
+        }
     }
-
-    // Calculate position (0-4000)
-    float position = weightedSum / sum;
-
-    // Convert to error value (-2000 to +2000)
-    // Middle position is 2000, so error = position - 2000
-    return position - 2000;
+    
+    if (inHardRightTurn && rightInner == 1) {
+        // Exit hard right turn if inner right sensor sees the line again
+        // and minimum turn time has passed
+        if (millis() - turnStartTime > MIN_TURN_TIME) {
+            inHardRightTurn = false;
+            lastActiveSensor = 1;
+            return 1; // Switch to slight right turn
+        } else {
+            return 2; // Continue hard right turn until minimum time
+        }
+    }
+    
+    // Continue hard turns if we're in one
+    if (inHardLeftTurn) {
+        return -2;
+    }
+    if (inHardRightTurn) {
+        return 2;
+    }
+    
+    // Normal line following for slight turns
+    if (leftInner == 1) {
+        lastActiveSensor = -1;
+        return -1; // Slight left turn
+    }
+    
+    if (rightInner == 1) {
+        lastActiveSensor = 1;
+        return 1; // Slight right turn
+    }
+    
+    // Default - go forward
+    return 10; // Forward
 }
 
-// Function for simple line-following control without PID
-float calculateSimpleCorrection(float error) {
-    // Simple proportional control with a non-linear response
-    // This creates more aggressive corrections for larger errors
-    float correction = error * 0.04; // Simple proportional factor
-    
-    // Add non-linear component for more aggressive turns when far from line
-    if (abs(error) > 1000) {
-        correction *= 1.5; // Boost correction for large errors
+// Check for serial commands
+void checkSerialCommands() {
+    if (Serial.available() > 0) {
+        String command = Serial.readStringUntil('\n');
+        command.trim();
+        
+        // Command format: "timeout:value" (value in seconds)
+        if (command.startsWith("timeout:")) {
+            int colonIndex = command.indexOf(':');
+            if (colonIndex != -1) {
+                String valueStr = command.substring(colonIndex + 1);
+                int newTimeout = valueStr.toInt();
+                
+                if (newTimeout > 0) {
+                    stairTimeoutDuration = (unsigned long)newTimeout * 1000; // Convert to milliseconds
+                    Serial.print("Stair timeout set to ");
+                    Serial.print(newTimeout);
+                    Serial.println(" seconds");
+                } else {
+                    Serial.println("Invalid timeout value. Please use a positive number.");
+                }
+            }
+        } else {
+            Serial.println("Unknown command. Available commands:");
+            Serial.println("  timeout:<seconds> - Set stair detection timeout duration");
+        }
     }
-    
-    if (DEBUG_MODE) {
-        Serial.print("Line Error: ");
-        Serial.print(error);
-        Serial.print(" Correction: ");
-        Serial.println(correction);
-    }
-    
-    return correction;
 }
 
 void loop() {
-    // Measure distance to any obstacles in front
-    int obstacleDistance = measureDistance();
+    // Check for serial commands
+    checkSerialCommands();
     
-    // Adjust base speed for climbing stairs when distance is less than 4cm
-    if (obstacleDistance < 4) {
-        baseSpeed = 180; // Reduce speed for climbing stairs
-        if (DEBUG_MODE) {
-            Serial.println("Stair detected! Reducing speed for climbing.");
+    // Check stair detection status
+    unsigned long currentTime = millis();
+    
+    // Check for stair detection timeout expiry
+    if (stairDetected && (currentTime - stairDetectedTime > stairTimeoutDuration)) {
+        stairDetected = false;
+        Serial.println("Stair timeout expired - resuming normal operation");
+    }
+    
+    // Read line position
+    int controlDecision = readSensors();
+
+    // Check for finish line detection
+    if (finishLineDetected) {
+        stopMotors();
+        
+        // Don't use LED for finish line indication
+        if (DEBUG_MODE && (currentTime - lastLedToggle > 2000)) {
+            Serial.println("Finish line detected! Car stopped.");
+            lastLedToggle = currentTime;
         }
-    } else {
-        baseSpeed = 240; // Normal speed operation
-    }
-    
-    // Check if there's an obstacle too close (emergency stop)
-    if (obstacleDistance < 2) { // Extremely close obstacle
-        // Stop car
-        stopMotors();
-        Serial.print("Obstacle too close at ");
-        Serial.print(obstacleDistance);
-        Serial.println("cm. Stopping.");
-        
-        // Wait briefly
-        delay(300);
-        return; // Return to beginning of loop to reassess
+        return;
     }
 
-    // Read line position
-    float error = readLinePosition();
-
-    // Check for finish line (this is handled in readLinePosition)
-    if (error == 999) {
-        return; // Already stopped in readLinePosition
+    // Apply control decision to motors
+    switch (controlDecision) {
+        case 1: // Slight right turn
+            setMotors(baseSpeed, turnSpeed); // Use regular turn speed instead of negative
+            if (DEBUG_MODE) Serial.println("Slight right turn");
+            break;
+            
+        case -1: // Slight left turn
+            setMotors(turnSpeed, baseSpeed); // Use regular turn speed instead of negative
+            if (DEBUG_MODE) Serial.println("Slight left turn");
+            break;
+            
+        case 2: // Hard right turn
+            setMotors(baseSpeed, hardTurnSpeed); // Keep baseSpeed for left motor, reverse for right
+            if (DEBUG_MODE) Serial.println("Hard right turn");
+            break;
+            
+        case -2: // Hard left turn
+            setMotors(hardTurnSpeed, baseSpeed); // Reverse for left motor, keep baseSpeed for right
+            if (DEBUG_MODE) Serial.println("Hard left turn");
+            break;
+            
+        case 0: // Stop (finish line or stair detected)
+            stopMotors();
+            if (finishLineDetected) {
+                if (DEBUG_MODE) Serial.println("Finish line detected! Car stopped.");
+            } else if (stairDetected) {
+                if (DEBUG_MODE && (currentTime - lastLedToggle > 1000)) {
+                    Serial.println("Stair detected! Car stopped. Time remaining: " + 
+                        String((stairTimeoutDuration - (currentTime - stairDetectedTime)) / 1000) + " seconds");
+                    lastLedToggle = currentTime;
+                }
+            }
+            break;
+            
+        case 3: // Recovery right turn
+            setMotors(baseSpeed, -turnSpeed);
+            if (DEBUG_MODE) Serial.println("Recovery right turn");
+            break;
+            
+        case -3: // Recovery left turn
+            setMotors(-turnSpeed, baseSpeed);
+            if (DEBUG_MODE) Serial.println("Recovery left turn");
+            break;
+            
+        default: // Forward
+            setMotors(baseSpeed, baseSpeed);
+            if (DEBUG_MODE) Serial.println("Going forward");
+            break;
     }
-
-    // Simple correction calculation (replacing PID)
-    float correction = calculateSimpleCorrection(error);
-
-    // Calculate motor speeds based on correction
-    int leftSpeed, rightSpeed;
-    
-    // Simpler motor speed calculation for 6-wheel rocker rover
-    // For smoother turns, apply proportional power instead of all-or-nothing
-    leftSpeed = baseSpeed - correction;
-    rightSpeed = baseSpeed + correction;
-    
-    // Ensure speeds are within valid range
-    leftSpeed = constrain(leftSpeed, 0, 255);
-    rightSpeed = constrain(rightSpeed, 0, 255);
-    
-    // Apply motor speeds - ensuring we're not completely stopping any side
-    // This provides smoother turns for the rocker rover
-    if (leftSpeed < 70) leftSpeed = 70;  // Minimum power to keep motors turning
-    if (rightSpeed < 70) rightSpeed = 70;
-    
-    setMotors(leftSpeed, rightSpeed);
 
     // Short delay
-    delay(20); // Adjust as needed for responsiveness
-}
-
-// Function to measure distance using HC-SR04 sonar sensor
-int measureDistance() {
-    // Clear the trigger pin
-    digitalWrite(TRIGGER_PIN, LOW);
-    delayMicroseconds(2);
-    
-    // Send 10μs pulse to trigger
-    digitalWrite(TRIGGER_PIN, HIGH);
-    delayMicroseconds(10);
-    digitalWrite(TRIGGER_PIN, LOW);
-    
-    // Read echo pin (duration in microseconds)
-    duration = pulseIn(ECHO_PIN, HIGH, 30000); // 30ms timeout
-    
-    // Calculate distance in centimeters
-    // Speed of sound is ~343m/s = 0.0343cm/μs
-    // Distance = time * speed / 2 (round-trip)
-    distance = (duration * 0.0343) / 2;
-    
-    // Check for timeout or invalid reading
-    if (duration == 0 || distance > maxDistance || distance <= 0) {
-        distance = maxDistance; // Default to max distance on error
-    }
-    
-    if (DEBUG_MODE) {
-        Serial.print("Distance: ");
-        Serial.print(distance);
-        Serial.println(" cm");
-    }
-    
-    return distance;
-}
-
-void loop() {
-    // Measure distance to any obstacles in front
-    int obstacleDistance = measureDistance();
-    
-    // Check if there's an obstacle too close
-    if (obstacleDistance < 20) { // Less than 20cm
-        // Stop car
-        stopMotors();
-        Serial.print("Obstacle detected at ");
-        Serial.print(obstacleDistance);
-        Serial.println("cm. Stopping.");
-        
-        // Wait briefly
-        delay(300);
-        
-        // Backup slightly
-        digitalWrite(IN1, LOW);
-        digitalWrite(IN2, HIGH);
-        digitalWrite(IN3, LOW);
-        digitalWrite(IN4, HIGH);
-        ledcWrite(ENA, 180);
-        ledcWrite(ENB, 180);
-        delay(400);
-        stopMotors();
-        
-        // Turn to avoid obstacle (turn right by default)
-        digitalWrite(IN1, HIGH);
-        digitalWrite(IN2, LOW);
-        digitalWrite(IN3, LOW);
-        digitalWrite(IN4, HIGH);
-        ledcWrite(ENA, 200);
-        ledcWrite(ENB, 200);
-        delay(500); // Adjust turn duration as needed
-        stopMotors();
-        
-        return; // Return to beginning of loop to reassess
-    }
-
-    // Read line position
-    float error = readLinePosition();
-
-    // Check for finish line (this is handled in readLinePosition)
-    if (error == 999) {
-        return; // Already stopped in readLinePosition
-    }
-
-    // Calculate PID correction
-    float correction = calculatePID(error);
-
-    // Calculate motor speeds based on PID correction
-    int leftSpeed, rightSpeed;
-    calculateMotorSpeeds(correction, &leftSpeed, &rightSpeed);
-
-    // Apply motor speeds
-    setMotors(leftSpeed, rightSpeed);
-
-    // Short delay
-    delay(20); // Adjust as needed for responsiveness
+    delay(25); // Adjust as needed for responsiveness
 }
