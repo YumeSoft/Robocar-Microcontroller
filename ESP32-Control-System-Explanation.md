@@ -9,19 +9,12 @@ Hệ thống điều khiển ESP32 Robocar sử dụng kiến trúc phân tầng
 - **L298N Motor Driver**: Điều khiển động cơ DC với H-Bridge
 - **Servo Motors**: Điều khiển cánh tay robot (6 servo)
 - **Line Sensors**: Cảm biến đường cho xe tự lái
-- **Power System**: Nguồn 7.4V Li-Po cho toàn bộ hệ thống
+- **Power System**: Nguồn 18265x3 (11.1 V) cho toàn bộ hệ thống
 
 ### 2. **Tầng Giao Tiếp (Communication Layer)**
 - **WiFi Access Point**: ESP32 tạo mạng WiFi riêng
 - **WebSocket Protocol**: Truyền dữ liệu real-time
 - **HTTP Server**: Phục vụ giao diện web điều khiển
-- **Serial Communication**: Debug và cấu hình qua USB
-
-### 3. **Tầng Ứng Dụng (Application Layer)**
-- **Web Interface**: Giao diện điều khiển responsive
-- **Motor Control Algorithm**: Thuật toán điều khiển động cơ
-- **Servo Coordination**: Điều phối chuyển động cánh tay
-- **Line Following AI**: Trí tuệ nhân tạo đi theo đường
 
 ---
 
@@ -90,28 +83,10 @@ void CAR_moveForward() {
 - **Rẽ trái**: IN1=HIGH, IN2=LOW, IN3=LOW, IN4=HIGH
 - **Rẽ phải**: IN1=LOW, IN2=HIGH, IN3=HIGH, IN4=LOW
 
-#### **Servo Control System**
-```cpp
-Servo servo1, servo2, servo3;
-
-void writeServoValues(int servoIndex, int value) {
-    servoPins[servoIndex].servo.write(value);
-}
-
-// Smooth servo movement
-void handleServoRotation() {
-    if (currentAngle < targetAngle) {
-        currentAngle += stepSize;
-        servo.write(currentAngle);
-    }
-}
-```
-
 **Tính năng servo:**
-- **6 servo motors**: Base, Shoulder, Elbow, Gripper, Auxiliary
+- **3-4 servo motors**: Shoulder, Elbow, Gripper
 - **Smooth movement**: Di chuyển từ từ tránh giật
 - **Position control**: Điều khiển góc 0-180°
-- **Coordinated action**: Phối hợp nhiều servo cùng lúc
 
 ### 🤖 **Hệ Thống Self-Driving Car**
 
@@ -168,57 +143,7 @@ void setMotors(int leftSpeed, int rightSpeed) {
 - **Hard Turn**: Rẽ mạnh, đảo chiều một bánh
 - **Recovery Turn**: Tìm lại đường khi mất vết
 
-#### **Safety Systems**
-```cpp
-// Stair detection
-if (stairSensor == 1) {
-    stairDetected = true;
-    stairDetectedTime = millis();
-    return 0; // Stop immediately
-}
-
-// Timeout check
-if (stairDetected && (millis() - stairDetectedTime > stairTimeoutDuration)) {
-    stairDetected = false; // Resume operation
-}
-```
-
-**Tính năng an toàn:**
-- **Stair detection**: Phát hiện cầu thang/vực sâu
-- **Timeout system**: Tự động tiếp tục sau thời gian chờ
-- **Finish line detection**: Dừng khi phát hiện vạch đích
-- **Emergency stop**: Dừng khẩn cấp khi cần thiết
-
 ---
-
-## 📡 **Giao Thức Truyền Thông**
-
-### **WebSocket Message Format**
-```javascript
-// Movement commands
-"Forward,1"    // Bắt đầu tiến
-"Forward,0"    // Dừng tiến
-"Backward,1"   // Bắt đầu lùi
-"Left,1"       // Bắt đầu rẽ trái
-"Right,1"      // Bắt đầu rẽ phải
-
-// Servo commands
-"Base,90"      // Xoay base đến 90°
-"Shoulder,45"  // Nâng shoulder đến 45°
-"Gripper,0"    // Đóng gripper
-
-// Special commands
-"RotateServos,1" // Thực hiện sequence bắn bóng
-```
-
-### **HTTP Request Handling**
-```cpp
-server.on("/", HTTP_GET, handleRoot);
-
-void handleRoot() {
-    server.send(200, "text/html", HTML_CONTENT);
-}
-```
 
 **Web server workflow:**
 1. Client request đến "/"
@@ -273,20 +198,6 @@ ledcAttach(ENB, freq, resolution);
 - Kiểm tra firewall settings
 ```
 
-#### **Motor Control Issues**
-```bash
-# Kiểm tra phần cứng:
-1. L298N power supply (7-12V)
-2. All wire connections secure
-3. Motor functionality test
-4. ESP32 5V output to L298N logic
-
-# Kiểm tra software:
-1. Serial Monitor for motor commands
-2. GPIO pin definitions match wiring
-3. PWM signal generation
-```
-
 #### **Servo Problems**
 ```bash
 # Power issues:
@@ -312,54 +223,10 @@ Serial.print("Servo position: ");
 ```
 
 ---
-
-## 🚀 **Performance Optimization**
-
-### **Speed Improvements**
-- Use `digitalWriteFast()` cho GPIO
-- Optimize sensor reading frequency
-- Reduce Serial output in production
-- Use interrupt-driven servo control
-
-### **Memory Optimization**
-- Store strings in PROGMEM
-- Use const variables where possible
-- Optimize buffer sizes
-- Remove unused library features
-
-### **Power Efficiency**
-- Use sleep modes when idle
-- Optimize PWM frequencies
-- Implement battery monitoring
-- Servo power management
-
----
-
-## 📈 **Advanced Features**
-
-### **Planned Enhancements**
-- **PID Control**: Smooth motor control
-- **Kalman Filter**: Sensor data fusion
-- **Machine Learning**: Adaptive line following
-- **Computer Vision**: Camera-based navigation
-- **Voice Control**: Speech recognition
-- **Mobile App**: Native smartphone control
-
-### **Extension Possibilities**
-- **Multiple Cars**: Swarm robotics
-- **IoT Integration**: Cloud connectivity
-- **Sensor Fusion**: IMU, GPS, Camera
-- **Autonomous Navigation**: SLAM mapping
-
----
-
 **🎯 Kết Luận**
 
 Hệ thống điều khiển ESP32 Robocar là một giải pháp tích hợp hoàn chỉnh, kết hợp:
 - **Hardware control** thông qua PWM và GPIO
 - **Network communication** qua WiFi và WebSocket
 - **Real-time processing** với thuật toán thông minh
-- **User interface** responsive và trực quan
-- **Safety systems** đảm bảo hoạt động an toàn
 
-Thiết kế modular cho phép dễ dàng mở rộng và tùy chỉnh theo nhu cầu cụ thể.
