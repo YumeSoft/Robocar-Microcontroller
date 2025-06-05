@@ -1,89 +1,79 @@
 /* ESP32
- * Self Driving Car - Simple Line Following
- * Using L298N motor driver and digital line sensors
+ * Xe Tự Lái - Thuật Toán Đi Theo Đường Kẻ Đơn Giản
+ * Sử dụng driver motor L298N và cảm biến đường kẻ số
  */
 
 #include <Arduino.h>
 
-// Pin definitions for L298N motor driver
-#define ENA 5  // PWM control for right motors
-#define ENB 18  // PWM control for left motors
-#define IN1 2   // Right motors direction 1
-#define IN2 4   // Right motors direction 2
-#define IN3 16  // Left motors direction 1
-#define IN4 17  // Left motors direction 2
+// Định nghĩa chân cho driver motor L298N
+#define ENA 5  // Điều khiển PWM cho motor phải
+#define ENB 18  // Điều khiển PWM cho motor trái
+#define IN1 2   // Hướng motor phải 1
+#define IN2 4   // Hướng motor phải 2
+#define IN3 16  // Hướng motor trái 1
+#define IN4 17  // Hướng motor trái 2
 
-// Pin definitions for line sensors (digital sensors)
-#define LEFT_MOST 13  // Leftmost sensor
-#define LEFT_INNER 12 // Left inner sensor
-#define RIGHT_INNER 14 // Right inner sensor
-#define RIGHT_MOST 27 // Rightmost sensor
-#define STAIR_SENSOR 26 // New stair detection sensor
+// Định nghĩa chân cho cảm biến đường kẻ DIGITAL
+#define LEFT_MOST 27  // Cảm biến ngoài cùng bên trái
+#define LEFT_INNER 14 // Cảm biến trong bên trái
+#define RIGHT_INNER 12 // Cảm biến trong bên phải
+#define RIGHT_MOST 13 // Cảm biến ngoài cùng bên phải
 
-// Motor speed variables
-int baseSpeed = 255;  // Base speed for motors, range 0-255
-int turnSpeed = 190;   // Regular speed for inner wheel in slight turns (changed from negative value)
-int hardTurnSpeed = 80; // Reversed speed for inner wheel in hard turns
-int reducedTurnSpeed = 150; // Speed for the reduced speed side during turns
-
-// Stair detection variables
-unsigned long stairDetectedTime = 0;
-unsigned long stairTimeoutDuration = 20000; // 20 seconds default timeout
-bool stairDetected = false;
-
-// Remove wheel locking control variables
+// Biến tốc độ motor
+int baseSpeed = 255;  // Tốc độ cơ bản cho motor, phạm vi 0-255
+int turnSpeed = 212;   // Tốc độ thường cho bánh trong khi rẽ nhẹ
+int hardTurnSpeed = 190; // Tốc độ ngược cho bánh trong khi rẽ mạnh
 #define DEBUG_MODE true
 
-// PWM properties for ESP32
-const int freq = 5000;
-const int resolution = 8;  // 8-bit resolution, 0-255
+// Thuộc tính PWM cho ESP32
+const int freq = 5000; // Tần số PWM 5kHz
+const int resolution = 8;  // Độ phân giải 8-bit, 0-255
 
-// For emergency recovery
-bool finishLineDetected = false; // DONT CHANGE THIS
-// This variable is used to indicate if the finish line has been detected
+// Cho khôi phục khẩn cấp
+bool finishLineDetected = false; // ĐỪNG THAY ĐỔI
+// Biến này được sử dụng để chỉ báo khi phát hiện vạch đích
 
-// For LED blinking patterns
+// Cho các mẫu nhấp nháy LED
 unsigned long lastLedToggle = 0;
-int ledBlinkInterval = 500; // Default blink interval in ms
+int ledBlinkInterval = 500; // Khoảng thời gian nhấp nháy mặc định tính bằng ms
 
-// For emergency recovery
-#define RECOVERY_TURN_DIRECTION 1  // 1 = right turn, -1 = left turn
+// Cho khôi phục khẩn cấp
+#define RECOVERY_TURN_DIRECTION 1  // 1 = rẽ phải, -1 = rẽ trái
 
-// For improved turning logic
-int lastActiveSensor = 0; // 0=none, -2=leftmost, -1=left inner, 1=right inner, 2=rightmost
+// Cho logic rẽ cải tiến
+int lastActiveSensor = 0; // 0=không có, -2=trái nhất, -1=trái trong, 1=phải trong, 2=phải nhất
 bool inHardLeftTurn = false;
 bool inHardRightTurn = false;
 unsigned long turnStartTime = 0;
-const unsigned long MIN_TURN_TIME = 0; // Minimum turn time in milliseconds
+const unsigned long MIN_TURN_TIME = 0; // Thời gian rẽ tối thiểu tính bằng milliseconds
 
 void setup() {
-    // Initialize serial for debugging
+    // Khởi tạo serial để debug
     Serial.begin(115200);
     Serial.println("ESP32 Self-Driving Car starting...");
     
-    // Comment out LED configuration
+    // Bỏ cấu hình LED (không cần thiết)
     // pinMode(LED_PIN, OUTPUT);
-    // digitalWrite(LED_PIN, HIGH); // Turn off LED (may be inverted on some boards)
+    // digitalWrite(LED_PIN, HIGH); // Tắt LED (có thể bị đảo trên một số board)
     
-    // Configure motor control pins
+    // Cấu hình các chân điều khiển motor
     pinMode(IN1, OUTPUT);
     pinMode(IN2, OUTPUT);
     pinMode(IN3, OUTPUT);
     pinMode(IN4, OUTPUT);
     
-    // Configure ESP32 PWM for motor control using newer ledcAttach function
-    // This automatically selects appropriate channels
-    ledcAttach(ENA, freq, resolution);  // Automatically assigns a channel for ENA
-    ledcAttach(ENB, freq, resolution);  // Automatically assigns a channel for ENB
+    // Cấu hình PWM của ESP32 để điều khiển motor sử dụng hàm ledcAttach mới
+    // Tự động chọn channel phù hợp
+    ledcAttach(ENA, freq, resolution);  // Tự động gán channel cho ENA
+    ledcAttach(ENB, freq, resolution);  // Tự động gán channel cho ENB
     
-    // Initialize line sensor pins
+    // Khởi tạo các chân cảm biến đường kẻ
     pinMode(LEFT_MOST, INPUT);
     pinMode(LEFT_INNER, INPUT);
     pinMode(RIGHT_INNER, INPUT);
     pinMode(RIGHT_MOST, INPUT);
-    pinMode(STAIR_SENSOR, INPUT); // Initialize stair sensor pin
     
-    // Countdown before starting - without LED flashing
+    // Đếm ngược trước khi bắt đầu - không có LED nhấp nháy
     Serial.println("Starting in:");
     for (int i = 3; i > 0; i--) {
         Serial.println(i);
@@ -93,35 +83,35 @@ void setup() {
     Serial.println("GO!");
 }
 
-// Function to control motors
+// Hàm điều khiển motor
 void setMotors(int leftSpeed, int rightSpeed) {
-    // Constrain speeds to valid PWM range
+    // Giới hạn tốc độ trong phạm vi PWM hợp lệ
     leftSpeed = constrain(leftSpeed, -255, 255);
     rightSpeed = constrain(rightSpeed, -255, 255);
     
-    // Left motors
+    // Motor trái - điều khiển bằng IN3, IN4
     if (leftSpeed >= 0) {
-        digitalWrite(IN1, HIGH);
-        digitalWrite(IN2, LOW);
-    } else {
-        digitalWrite(IN1, LOW);
-        digitalWrite(IN2, HIGH);
-        leftSpeed = -leftSpeed;  // Convert negative speed to positive PWM value
-    }
-    
-    // Right motors
-    if (rightSpeed >= 0) {
-        digitalWrite(IN3, HIGH); 
+        digitalWrite(IN3, HIGH);
         digitalWrite(IN4, LOW);
     } else {
         digitalWrite(IN3, LOW);
         digitalWrite(IN4, HIGH);
-        rightSpeed = -rightSpeed;  // Convert negative speed to positive PWM value
+        leftSpeed = -leftSpeed;  // Chuyển tốc độ âm thành giá trị PWM dương
     }
     
-    // Apply PWM speed control using pin-based ledcWrite for the newer API
-    ledcWrite(ENA, leftSpeed);   // Writing to ENA pin for left motors
-    ledcWrite(ENB, rightSpeed);  // Writing to ENB pin for right motors
+    // Motor phải - điều khiển bằng IN1, IN2
+    if (rightSpeed >= 0) {
+        digitalWrite(IN1, HIGH); 
+        digitalWrite(IN2, LOW);
+    } else {
+        digitalWrite(IN1, LOW);
+        digitalWrite(IN2, HIGH);
+        rightSpeed = -rightSpeed;  // Chuyển tốc độ âm thành giá trị PWM dương
+    }
+    
+    // Áp dụng điều khiển tốc độ PWM sử dụng ledcWrite dựa trên pin cho API mới
+    ledcWrite(ENB, leftSpeed);   // Ghi vào pin ENB cho motor trái
+    ledcWrite(ENA, rightSpeed);  // Ghi vào pin ENA cho motor phải
     
     if (DEBUG_MODE) {
         Serial.print("Motors: L=");
@@ -131,26 +121,25 @@ void setMotors(int leftSpeed, int rightSpeed) {
     }
 }
 
-// Function to stop motors
+// Hàm dừng motor
 void stopMotors() {
     digitalWrite(IN1, LOW);
     digitalWrite(IN2, LOW);
     digitalWrite(IN3, LOW);
     digitalWrite(IN4, LOW);
-    ledcWrite(ENA, 0); // Stop right motors50
-    ledcWrite(ENB, 0); // Stop left motors
+    ledcWrite(ENA, 0); // Dừng motor phải
+    ledcWrite(ENB, 0); // Dừng motor trái
     Serial.println("Motors stopped");
 }
 
-// Read line sensor values and return control decision
+// Đọc giá trị cảm biến đường kẻ và trả về quyết định điều khiển
 int readSensors() {
-    // Read digital values from the 4 sensors
-    // CORRECTED: Digital reading: 1 for black line, 0 for white surface
+    // Đọc giá trị số từ 4 cảm biến
+    // ĐÃ SỬA: Đọc số: 1 cho đường kẻ đen, 0 cho bề mặt trắng
     int leftMost = digitalRead(LEFT_MOST);
     int leftInner = digitalRead(LEFT_INNER);
     int rightInner = digitalRead(RIGHT_INNER);
     int rightMost = digitalRead(RIGHT_MOST);
-    int stairSensor = digitalRead(STAIR_SENSOR); // Read stair sensor value
     
     if (DEBUG_MODE) {
         Serial.print("Sensors: LM=");
@@ -160,106 +149,89 @@ int readSensors() {
         Serial.print(" RI=");
         Serial.print(rightInner);
         Serial.print(" RM=");
-        Serial.print(rightMost);
-        Serial.print(" ST=");
-        Serial.println(stairSensor);
+        Serial.println(rightMost);
     }
 
-    // Check for stair detection
-    if (stairSensor == 1) {
-        if (!stairDetected) {
-            stairDetected = true;
-            stairDetectedTime = millis();
-            Serial.println("STAIR DETECTED! Disabling line reading for 20 seconds");
-        }
-        return 0; // Stop immediately when stair detected
-    }
-
-    // If stair detected and timeout not expired, ignore line sensors
-    if (stairDetected && (millis() - stairDetectedTime < stairTimeoutDuration)) {
-        return 0; // Keep stopped during stair detection timeout
-    }
-
-    // Check for finish line (all sensors reading black)
+    // Kiểm tra vạch đích (tất cả cảm biến đọc đen)
     if (leftMost == 1 && leftInner == 1 && rightInner == 1 && rightMost == 1) {
-        // Added debounce to prevent false detections
+        // Thêm debounce để tránh phát hiện sai
         delay(50);
         
-        // Read again to confirm
+        // Đọc lại để xác nhận
         leftMost = digitalRead(LEFT_MOST);
         leftInner = digitalRead(LEFT_INNER);
         rightInner = digitalRead(RIGHT_INNER);
         rightMost = digitalRead(RIGHT_MOST);
         
-        // Only stop if still detecting finish line
+        // Chỉ dừng nếu vẫn phát hiện vạch đích
         if (leftMost == 1 && leftInner == 1 && rightInner == 1 && rightMost == 1) {
             finishLineDetected = true;
-            return 0; // Stop
+            return 0; // Dừng
         }
     }
 
-    // Check for "out of track" - all sensors reading white
+    // Kiểm tra "ra khỏi đường" - tất cả cảm biến đọc trắng
     if (leftMost == 0 && leftInner == 0 && rightInner == 0 && rightMost == 0) {
         if (DEBUG_MODE) {
             Serial.println("All sensors white - continuing last direction");
         }
         
-        // Continue turning in the last direction until line is found again
+        // Tiếp tục rẽ theo hướng cuối cùng cho đến khi tìm thấy đường lại
         if (lastActiveSensor < 0) {
-            return -2; // Continue turning left based on last detection
+            return -2; // Tiếp tục rẽ trái dựa trên phát hiện cuối
         } else if (lastActiveSensor > 0) {
-            return 2; // Continue turning right based on last detection
+            return 2; // Tiếp tục rẽ phải dựa trên phát hiện cuối
         } else {
-            return 10; // Forward if no previous direction
+            return 10; // Đi thẳng nếu không có hướng trước
         }
     }
 
-    // Handle turn transitions and sensor tracking
+    // Xử lý chuyển tiếp rẽ và theo dõi cảm biến
     
-    // Hard left turn initiated by leftmost sensor
+    // Rẽ trái mạnh được khởi tạo bởi cảm biến trái nhất
     if (leftMost == 1) {
         lastActiveSensor = -2;
         inHardLeftTurn = true;
         inHardRightTurn = false;
         turnStartTime = millis();
-        return -2; // Hard left turn
+        return -2; // Rẽ trái mạnh
     }
     
-    // Hard right turn initiated by rightmost sensor
+    // Rẽ phải mạnh được khởi tạo bởi cảm biến phải nhất
     if (rightMost == 1) {
         lastActiveSensor = 2;
         inHardRightTurn = true;
         inHardLeftTurn = false;
         turnStartTime = millis();
-        return 2; // Hard right turn
+        return 2; // Rẽ phải mạnh
     }
 
-    // Check if we should exit a hard turn when inner sensor detects line
+    // Kiểm tra nếu nên thoát khỏi rẽ mạnh khi cảm biến trong phát hiện đường
     if (inHardLeftTurn && leftInner == 1) {
-        // Exit hard left turn if inner left sensor sees the line again
-        // and minimum turn time has passed
+        // Thoát khỏi rẽ trái mạnh nếu cảm biến trái trong thấy đường lại
+        // và thời gian rẽ tối thiểu đã qua
         if (millis() - turnStartTime > MIN_TURN_TIME) {
             inHardLeftTurn = false;
             lastActiveSensor = -1;
-            return -1; // Switch to slight left turn
+            return -1; // Chuyển sang rẽ trái nhẹ
         } else {
-            return -2; // Continue hard left turn until minimum time
+            return -2; // Tiếp tục rẽ trái mạnh cho đến thời gian tối thiểu
         }
     }
     
     if (inHardRightTurn && rightInner == 1) {
-        // Exit hard right turn if inner right sensor sees the line again
-        // and minimum turn time has passed
+        // Thoát khỏi rẽ phải mạnh nếu cảm biến phải trong thấy đường lại
+        // và thời gian rẽ tối thiểu đã qua
         if (millis() - turnStartTime > MIN_TURN_TIME) {
             inHardRightTurn = false;
             lastActiveSensor = 1;
-            return 1; // Switch to slight right turn
+            return 1; // Chuyển sang rẽ phải nhẹ
         } else {
-            return 2; // Continue hard right turn until minimum time
+            return 2; // Tiếp tục rẽ phải mạnh cho đến thời gian tối thiểu
         }
     }
     
-    // Continue hard turns if we're in one
+    // Tiếp tục rẽ mạnh nếu đang trong một lần rẽ
     if (inHardLeftTurn) {
         return -2;
     }
@@ -267,129 +239,95 @@ int readSensors() {
         return 2;
     }
     
-    // Normal line following for slight turns
+    // Theo đường bình thường cho rẽ nhẹ
     if (leftInner == 1) {
         lastActiveSensor = -1;
-        return -1; // Slight left turn
+        return -1; // Rẽ trái nhẹ - cảm biến trái phát hiện đường
     }
     
     if (rightInner == 1) {
         lastActiveSensor = 1;
-        return 1; // Slight right turn
+        return 1; // Rẽ phải nhẹ - cảm biến phải phát hiện đường
     }
     
-    // Default - go forward
-    return 10; // Forward
+    // Mặc định - đi thẳng
+    return 10; // Tiến
 }
 
-// Check for serial commands
+// Kiểm tra lệnh serial
 void checkSerialCommands() {
     if (Serial.available() > 0) {
         String command = Serial.readStringUntil('\n');
         command.trim();
         
-        // Command format: "timeout:value" (value in seconds)
-        if (command.startsWith("timeout:")) {
-            int colonIndex = command.indexOf(':');
-            if (colonIndex != -1) {
-                String valueStr = command.substring(colonIndex + 1);
-                int newTimeout = valueStr.toInt();
-                
-                if (newTimeout > 0) {
-                    stairTimeoutDuration = (unsigned long)newTimeout * 1000; // Convert to milliseconds
-                    Serial.print("Stair timeout set to ");
-                    Serial.print(newTimeout);
-                    Serial.println(" seconds");
-                } else {
-                    Serial.println("Invalid timeout value. Please use a positive number.");
-                }
-            }
-        } else {
-            Serial.println("Unknown command. Available commands:");
-            Serial.println("  timeout:<seconds> - Set stair detection timeout duration");
-        }
+        Serial.println("Lệnh không xác định. Các lệnh có sẵn:");
+        Serial.println("  Hiện tại không có lệnh nào");
     }
 }
 
 void loop() {
-    // Check for serial commands
+    // Kiểm tra lệnh serial
     checkSerialCommands();
     
-    // Check stair detection status
-    unsigned long currentTime = millis();
-    
-    // Check for stair detection timeout expiry
-    if (stairDetected && (currentTime - stairDetectedTime > stairTimeoutDuration)) {
-        stairDetected = false;
-        Serial.println("Stair timeout expired - resuming normal operation");
-    }
-    
-    // Read line position
+    // Đọc vị trí đường kẻ
     int controlDecision = readSensors();
 
-    // Check for finish line detection
+    // Kiểm tra phát hiện vạch đích
     if (finishLineDetected) {
         stopMotors();
         
-        // Don't use LED for finish line indication
-        if (DEBUG_MODE && (currentTime - lastLedToggle > 2000)) {
+        // Không sử dụng LED để chỉ báo vạch đích
+        if (DEBUG_MODE) {
             Serial.println("Finish line detected! Car stopped.");
-            lastLedToggle = currentTime;
         }
         return;
     }
 
-    // Apply control decision to motors
+    // Áp dụng quyết định điều khiển cho motor
     switch (controlDecision) {
-        case 1: // Slight right turn
-            setMotors(baseSpeed, turnSpeed); // Use regular turn speed instead of negative
+        case 1: // Rẽ phải nhẹ
+            setMotors(baseSpeed, turnSpeed); // Motor trái nhanh hơn, motor phải chậm hơn để rẽ phải
             if (DEBUG_MODE) Serial.println("Slight right turn");
             break;
             
-        case -1: // Slight left turn
-            setMotors(turnSpeed, baseSpeed); // Use regular turn speed instead of negative
+        case -1: // Rẽ trái nhẹ
+            setMotors(turnSpeed, baseSpeed); // Motor trái chậm hơn, motor phải nhanh hơn để rẽ trái
             if (DEBUG_MODE) Serial.println("Slight left turn");
             break;
             
-        case 2: // Hard right turn
-            setMotors(baseSpeed, hardTurnSpeed); // Keep baseSpeed for left motor, reverse for right
+        case 2: // Rẽ phải mạnh
+            setMotors(baseSpeed, -hardTurnSpeed); // Motor trái tiến, motor phải lùi để rẽ mạnh
             if (DEBUG_MODE) Serial.println("Hard right turn");
             break;
             
-        case -2: // Hard left turn
-            setMotors(hardTurnSpeed, baseSpeed); // Reverse for left motor, keep baseSpeed for right
+        case -2: // Rẽ trái mạnh
+            setMotors(-hardTurnSpeed, baseSpeed); // Motor trái lùi, motor phải tiến để rẽ mạnh
             if (DEBUG_MODE) Serial.println("Hard left turn");
             break;
             
-        case 0: // Stop (finish line or stair detected)
+        case 0: // Dừng (phát hiện vạch đích)
             stopMotors();
             if (finishLineDetected) {
                 if (DEBUG_MODE) Serial.println("Finish line detected! Car stopped.");
-            } else if (stairDetected) {
-                if (DEBUG_MODE && (currentTime - lastLedToggle > 1000)) {
-                    Serial.println("Stair detected! Car stopped. Time remaining: " + 
-                        String((stairTimeoutDuration - (currentTime - stairDetectedTime)) / 1000) + " seconds");
-                    lastLedToggle = currentTime;
-                }
             }
             break;
             
-        case 3: // Recovery right turn
+        case 3: // Rẽ phải khôi phục
             setMotors(baseSpeed, -turnSpeed);
             if (DEBUG_MODE) Serial.println("Recovery right turn");
             break;
             
-        case -3: // Recovery left turn
+        case -3: // Rẽ trái khôi phục
             setMotors(-turnSpeed, baseSpeed);
             if (DEBUG_MODE) Serial.println("Recovery left turn");
             break;
             
-        default: // Forward
+        default: // Tiến
             setMotors(baseSpeed, baseSpeed);
             if (DEBUG_MODE) Serial.println("Going forward");
             break;
     }
 
-    // Short delay
-    delay(25); // Adjust as needed for responsiveness
+    // Delay ngắn
+    delay(20); // Điều chỉnh theo nhu cầu về độ phản hồi
 }
