@@ -31,10 +31,10 @@ std::vector<ServoPins> servoPins = {
 #define MOTOR_B_IN2 15       // Chân IN2 của Motor B
 
 // Cấu hình WiFi
-const char* ssid = "Name";           // Tên WiFi IP
-const char* password = "pass";    // Mật khẩu WiFi IP
-IPAddress local_IP(192, 168, 1, 12);  // Địa chỉ IP tĩnh
-IPAddress gateway(192, 168, 1, 12);   // Gateway
+const char* ssid = "Team AKATSUKI";           // Tên WiFi IP
+const char* password = "toithieu8kitu";    // Mật khẩu WiFi IP
+IPAddress local_IP(192, 168, 1, 8);  // Địa chỉ IP tĩnh
+IPAddress gateway(192, 168, 1, 8);   // Gateway
 IPAddress subnet(255, 255, 255, 0);   // Subnet mask
 
 // Khởi tạo server
@@ -73,13 +73,14 @@ const char* htmlHomePage PROGMEM = R"HTMLHOMEPAGE(
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
   <style>
     :root {
-      --primary-color: #FF8C00;
-      --secondary-color: #FFA500;
-      --accent-color: #FF6347;
-      --dark-color: #333;
-      --light-color: #FFF8DC;
-      --slider-thumb: #FF4500;
-      --slider-track: #FFD700;
+      /* Catppuccin Latte theme colors */
+      --primary-color: #1e66f5; /* Blue */
+      --secondary-color: #179299; /* Teal */
+      --accent-color: #fe640b; /* Peach */
+      --dark-color: #4c4f69; /* Text */
+      --light-color: #eff1f5; /* Base */
+      --slider-thumb: #8839ef; /* Mauve */
+      --slider-track: #ccd0da; /* Surface2 */
     }
     
     body {
@@ -209,12 +210,141 @@ const char* htmlHomePage PROGMEM = R"HTMLHOMEPAGE(
       width: 100%;
       font-weight: bold;
       margin-top: 10px;
+      cursor: pointer;}
+    
+    body {
+      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+      background-color: var(--light-color);
+      margin: 0;
+      padding: 10px;
+    }
+    
+    .noselect {
+      -webkit-touch-callout: none;
+      -webkit-user-select: none;
+      -khtml-user-select: none;
+      -moz-user-select: none;
+      -ms-user-select: none;
+      user-select: none;
+    }
+    
+    .header {
+      text-align: center;
+      margin-bottom: 15px;
+      color: var(--dark-color);
+    }
+    
+    .header h1 {
+      font-size: 2rem;
+      margin: 5px 0;
+      color: var(--primary-color);
+      text-shadow: 1px 1px 2px rgba(0,0,0,0.1);
+    }
+    
+    .control-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+      max-width: 600px;
+      margin: 0 auto;
+    }
+    
+    .control-panel {
+      background-color: white;
+      border-radius: 10px;
+      padding: 15px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+    }
+    
+    .slider-container {
+      margin-bottom: 15px;
+    }
+    
+    .slider-label {
+      display: flex;
+      justify-content: space-between;
+      margin-bottom: 5px;
+      font-weight: bold;
+      color: var(--dark-color);
+      font-size: 14px;
+    }
+    
+    .slider {
+      -webkit-appearance: none;
+      width: 100%;
+      height: 10px;
+      border-radius: 5px;
+      background: var(--slider-track);
+      outline: none;
+    }
+    
+    .slider::-webkit-slider-thumb {
+      -webkit-appearance: none;
+      width: 20px;
+      height: 20px;
+      border-radius: 50%;
+      background: var(--slider-thumb);
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+    
+    .slider::-moz-range-thumb {
+      width: 20px;
+      height: 20px;
+      border-radius: 50%;
+      background: var(--slider-thumb);
+      cursor: pointer;
+    }
+    
+    .arrow-button {
+      background-color: var(-primary-color);
+      color: white;
+      border-radius: 10px;
+      width: 70px;
+      height: 70px;
+      font-size: 25px;
+      border: none;
+      margin: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+    
+    .arrow-button:hover {
+      background-color: var(--accent-color);
+      transform: scale(1.05);
+    }
+    
+    .arrow-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 5px;
+      width: 220px;
+      margin: 0 auto;
+    }
+    
+    .up { grid-column: 2; grid-row: 1; }
+    .left { grid-column: 1; grid-row: 2; }
+    .right { grid-column: 3; grid-row: 2; }
+    .down { grid-column: 2; grid-row: 3; }
+    
+    .shoot-btn {
+      background-color: var(--accent-color);
+      color: white;
+      border: none;
+      border-radius: 5px;
+      padding: 10px;
+      width: 100%;
+      font-weight: bold;
+      margin-top: 10px;
       cursor: pointer;
       transition: all 0.2s;
     }
     
     .shoot-btn:hover {
-      background-color: #FF4500;
+      background-color: #d20f39; /* Red for hover effect */
     }
     
     @media (max-width: 600px) {
